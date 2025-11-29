@@ -1,0 +1,56 @@
+pretrain_config: TransE
+g_config: DistMult
+d_config: TransE
+test_batch_size: 100
+task:
+  dir: fb15k237
+  type: link
+KBGAN:
+  n_sample: 20
+  n_epoch: 5000
+  n_batch: 100
+  epoch_per_test: 100
+  temperature: 1.0
+  early_stopping_pretrain: false
+  early_stopping_train: false
+  patience: 10
+  optimizer_name: Adam
+TransE:
+  dim: 50
+  margin: 3
+  p: 1
+  n_epoch: 1000
+  n_batch: 100
+  epoch_per_test: 50
+  model_file: transe.mdl
+TransD:
+  dim: 50
+  margin: 3
+  p: 1
+  n_epoch: 1000
+  n_batch: 100
+  epoch_per_test: 50
+  model_file: transd.mdl
+DistMult:
+  dim: 50
+  lam: 1
+  n_sample: 20
+  sample_freq: 1
+  n_epoch: 1000
+  n_batch: 100
+  epoch_per_test: 50
+  model_file: distmult.mdl
+ComplEx:
+  dim: 25
+  lam: 1
+  n_sample: 20
+  sample_freq: 1
+  n_epoch: 1000
+  n_batch: 100
+  epoch_per_test: 50
+  model_file: complex.mdl
+log:
+  dump_config: false
+  to_file: false
+  dir: ./log
+  prefix:
