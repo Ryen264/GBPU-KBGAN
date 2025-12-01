@@ -6,6 +6,7 @@ from torch.autograd import Variable
 from torch.optim import Adam, SGD, AdamW, RMSprop, Adagrad
 import numpy as np
 from typing import Generator, Tuple
+from config import device
 
 from config import config, overwrite_config_with_args, logger_init
 from datasets import batch_by_num, BernCorrupterMulti, BernCorrupter, sparse_heads_tails
@@ -159,9 +160,12 @@ class Component():
         """Generator step: sample fake triples and update with REINFORCE"""
         # Forward pass: generate samples
         n, m = tail.size()
-        relation_var = Variable(relation.cuda())
-        head_var = Variable(head.cuda())
-        tail_var = Variable(tail.cuda())
+        # relation_var = Variable(relation.cuda())
+        # head_var = Variable(head.cuda())
+        # tail_var = Variable(tail.cuda())
+        relation_var = Variable(relation.to(device))
+        head_var = Variable(head.to(device))
+        tail_var = Variable(tail.to(device))
 
         logits = self.model.model.prob_logit(head_var, relation_var, tail_var) / temperature
         probs = nnf.softmax(logits, dim=-1)
@@ -178,7 +182,7 @@ class Component():
             self.model._ensure_optimizer()
             self.model.model.zero_grad()
             log_probs = nnf.log_softmax(logits, dim=-1)
-            reinforce_loss = -torch.sum(Variable(rewards) * log_probs[row_idx.cuda(), sample_idx.data])
+            reinforce_loss = -torch.sum(Variable(rewards) * log_probs[row_idx.to(device), sample_idx.data])
             reinforce_loss.backward()
             self.model.opt.step()
             self.model.model.constraint()
@@ -191,11 +195,11 @@ class Component():
             raise ValueError("head_fake and tail_fake must be provided for discriminator step")
         
         # Forward pass: compute losses and scores
-        head_var = Variable(head.cuda())
-        relation_var = Variable(relation.cuda())
-        tail_var = Variable(tail.cuda())
-        head_fake_var = Variable(head_fake.cuda())
-        tail_fake_var = Variable(tail_fake.cuda())
+        head_var = Variable(head.to(device))
+        relation_var = Variable(relation.to(device))
+        tail_var = Variable(tail.to(device))
+        head_fake_var = Variable(head_fake.to(device))
+        tail_fake_var = Variable(tail_fake.to(device))
         
         losses = self.model.model.pair_loss(head_var, relation_var, tail_var, head_fake_var, tail_fake_var)
         fake_scores = self.model.model.score(head_fake_var, relation_var, tail_fake_var)
@@ -242,9 +246,9 @@ class Component():
         scores_list = []
         with torch.no_grad():
             for i in range(len(heads)):
-                head = torch.LongTensor([heads[i]]).cuda()
-                relation = torch.LongTensor([relations[i]]).cuda()
-                tail = torch.LongTensor([tails[i]]).cuda()
+                head = torch.LongTensor([heads[i]]).to(device)
+                relation = torch.LongTensor([relations[i]]).to(device)
+                tail = torch.LongTensor([tails[i]]).to(device)
 
                 score = self.get_score(head, relation, tail)
                 scores_list.append(score)
@@ -543,9 +547,9 @@ class KBGAN():
         scores_list = []
         with torch.no_grad():
             for i in range(len(heads_test)):
-                head = torch.LongTensor([heads_test[i]]).cuda()
-                relation = torch.LongTensor([relations_test[i]]).cuda()
-                tail = torch.LongTensor([tails_test[i]]).cuda()
+                head = torch.LongTensor([heads_test[i]]).to(device)
+                relation = torch.LongTensor([relations_test[i]]).to(device)
+                tail = torch.LongTensor([tails_test[i]]).to(device)
 
                 score = self.discriminator.get_score(head, relation, tail)
                 scores_list.append(score)

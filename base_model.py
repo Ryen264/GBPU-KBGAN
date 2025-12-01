@@ -5,7 +5,7 @@ from torch.optim import Adam
 from typing import Tuple
 import logging
 
-from config import config
+from config import config, device
 from datasets import batch_by_size
 
 def mr_mrr_hitsk(scores, target, k_list=[1, 3, 10]):
@@ -48,7 +48,7 @@ class BaseModule(nn.Module):
     def softmax_loss(self, head, relation, tail, truth):
         probs = self.prob(head, relation, tail)
         n = probs.size(0)
-        truth_probs = torch.log(probs[torch.arange(0, n).type(torch.LongTensor).cuda(), truth] + 1e-30)
+        truth_probs = torch.log(probs[torch.arange(0, n).type(torch.LongTensor).to(device), truth] + 1e-30)
         return -truth_probs
     
 class BaseModel(object):
@@ -67,7 +67,7 @@ class BaseModel(object):
         torch.save(self.model.state_dict(), model_filename)
 
     def load_model(self, model_filename):
-        state_dict = torch.load(model_filename, map_location=lambda storage, location: storage.cuda(), weights_only=True)
+        state_dict = torch.load(model_filename, map_location=lambda storage, location: storage.to(device), weights_only=True)
         self.model.load_state_dict(state_dict)
 
     def _ensure_optimizer(self):
@@ -93,10 +93,10 @@ class BaseModel(object):
             for batch_head, batch_relation, batch_tail in batch_by_size(config().test_batch_size, *test_data):
                 batch_size = batch_head.size(0)
 
-                all_var = torch.arange(0, n_entity).unsqueeze(0).expand(batch_size, n_entity).long().cuda()
-                head_var = batch_head.unsqueeze(1).expand(batch_size, n_entity).cuda()
-                relation_var = batch_relation.unsqueeze(1).expand(batch_size, n_entity).cuda()
-                tail_var = batch_tail.unsqueeze(1).expand(batch_size, n_entity).cuda()
+                all_var = torch.arange(0, n_entity).unsqueeze(0).expand(batch_size, n_entity).long().to(device)
+                head_var = batch_head.unsqueeze(1).expand(batch_size, n_entity).to(device)
+                relation_var = batch_relation.unsqueeze(1).expand(batch_size, n_entity).to(device)
+                tail_var = batch_tail.unsqueeze(1).expand(batch_size, n_entity).to(device)
 
                 batch_head_scores = self.model.score(all_var, relation_var, tail_var)
                 batch_tail_scores = self.model.score(head_var, relation_var, all_var)
@@ -111,13 +111,13 @@ class BaseModel(object):
                         key_head = (tail_id, relation_id)
                         if key_head in heads and heads[key_head]._nnz() > 1:
                             tmp = head_scores[head_id].item()
-                            head_scores += heads[key_head].cuda() * 1e30
+                            head_scores += heads[key_head].to(device) * 1e30
                             head_scores[head_id] = tmp
                             
                         key_tail = (head_id, relation_id)
                         if key_tail in tails and tails[key_tail]._nnz() > 1:
                             tmp = tail_scores[tail_id].item()
-                            tail_scores += tails[key_tail].cuda() * 1e30
+                            tail_scores += tails[key_tail].to(device) * 1e30
                             tail_scores[tail_id] = tmp
 
                     head_mr, head_mrr, head_hits, head_target_score = mr_mrr_hitsk(scores=head_scores, target=head_id, k_list=k_list)

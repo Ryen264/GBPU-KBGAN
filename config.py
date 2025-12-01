@@ -151,3 +151,13 @@ def logger_init():
 
     if config().log.dump_config:
         dump_config()
+
+gpu_id = select_gpu()
+device = None
+if gpu_id is not None and torch.cuda.is_available():
+    torch.cuda.set_device(gpu_id)
+    device = torch.device(f"cuda:{gpu_id}")
+    print(f"Using GPU: {device}")
+else:
+    device = torch.device("cpu")
+    print("No GPU available. Running on CPU.")

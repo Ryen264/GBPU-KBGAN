@@ -7,7 +7,7 @@ import logging
 import os
 import numpy as np
 
-from config import config
+from config import config, device
 from datasets import batch_by_num
 from base_model import BaseModel, BaseModule
 
@@ -46,7 +46,7 @@ class TransE(BaseModel):
     def __init__(self, n_entity, n_relation, config):
         super().__init__()
         self.model = TransEModule(n_entity, n_relation, config)
-        self.model.cuda()
+        self.model.to(device)
         self.config = config
         self.path = None
 
@@ -70,12 +70,11 @@ class TransE(BaseModel):
             tail = tail[rand_idx]
 
             head_corrupted, tail_corrupted = corrupter.corrupt(head, relation, tail)
-            head_cuda = head.cuda()
-            relation_cuda = relation.cuda()
-            tail_cuda = tail.cuda()
-            head_corrupted = head_corrupted.cuda()
-            tail_corrupted = tail_corrupted.cuda()
-
+            head_cuda = head.to(device)
+            relation_cuda = relation.to(device)
+            tail_cuda = tail.to(device)
+            head_corrupted = head_corrupted.to(device)
+            tail_corrupted = tail_corrupted.to(device)
             epoch_loss = 0
             for h0, r, t0, h1, t1 in batch_by_num(n_batch, head_cuda, relation_cuda, tail_cuda, head_corrupted, tail_corrupted, n_sample=n_train):
                 self.model.zero_grad()
@@ -145,7 +144,7 @@ class TransD(BaseModel):
     def __init__(self, n_entity, n_relation, config):
         super().__init__()
         self.model = TransDModule(n_entity, n_relation, config)
-        self.model.cuda()
+        self.model.to(device)
         self.config = config
         self.path = None
 
@@ -160,7 +159,7 @@ class TransD(BaseModel):
         a_mat = np.loadtxt(os.path.join(vecpath, 'A.vec'))
         self.model.proj_relation_embed.weight.data.copy_(torch.from_numpy(a_mat[:n_relation, :]))
         self.model.proj_entity_embed.weight.data.copy_(torch.from_numpy(a_mat[n_relation:, :]))
-        self.model.cuda()
+        self.model.to(device)
 
     def train(self, train_data, corrupter, tester,
               use_early_stopping=False, patience=10, optimizer_name='Adam') -> Tuple[float, str]:
@@ -182,12 +181,11 @@ class TransD(BaseModel):
             tail = tail[rand_idx]
 
             head_corrupted, tail_corrupted = corrupter.corrupt(head, relation, tail)
-            head_cuda = head.cuda()
-            relation_cuda = relation.cuda()
-            tail_cuda = tail.cuda()
-            head_corrupted = head_corrupted.cuda()
-            tail_corrupted = tail_corrupted.cuda()
-
+            head_cuda = head.to(device)
+            relation_cuda = relation.to(device)
+            tail_cuda = tail.to(device)
+            head_corrupted = head_corrupted.to(device)
+            tail_corrupted = tail_corrupted.to(device)
             epoch_loss = 0
             for h0, r, t0, h1, t1 in batch_by_num(n_batch, head_cuda, relation_cuda, tail_cuda, head_corrupted, tail_corrupted, n_sample=n_train):
                 self.model.zero_grad()
@@ -242,7 +240,7 @@ class DistMult(BaseModel):
     def __init__(self, n_entity, n_relation, config):
         super().__init__()
         self.model = DistMultModule(n_entity, n_relation, config)
-        self.model.cuda()
+        self.model.to(device)
         self.config = config
         self.path = None
         self.weight_decay = config.lam / config.n_batch
@@ -269,14 +267,13 @@ class DistMult(BaseModel):
                 tail = tail[rand_idx]
 
                 head_corrupted, relation_corrupted, tail_corrupted = corrupter.corrupt(head, relation, tail)
-                head_corrupted = head_corrupted.cuda()
-                relation_corrupted = relation_corrupted.cuda()
-                tail_corrupted = tail_corrupted.cuda()
+                head_corrupted = head_corrupted.to(device)
+                relation_corrupted = relation_corrupted.to(device)
+                tail_corrupted = tail_corrupted.to(device)
 
             for hs, rs, ts in batch_by_num(n_batch, head_corrupted, relation_corrupted, tail_corrupted, n_sample=n_train):
                 self.model.zero_grad()
-                label = torch.zeros(len(hs)).type(torch.LongTensor).cuda()
-
+                label = torch.zeros(len(hs)).type(torch.LongTensor).to(device)
                 loss = torch.sum(self.model.softmax_loss(Variable(hs), Variable(rs), Variable(ts), label))
                 loss.backward()
 
@@ -334,7 +331,7 @@ class ComplEx(BaseModel):
     def __init__(self, n_entity, n_relation, config):
         super().__init__()
         self.model = ComplExModule(n_entity, n_relation, config)
-        self.model.cuda()
+        self.model.to(device)
         self.config = config
         self.path = None
         self.weight_decay = config.lam / config.n_batch
@@ -361,13 +358,13 @@ class ComplEx(BaseModel):
                 tail = tail[rand_idx]
 
                 head_corrupted, relation_corrupted, tail_corrupted = corrupter.corrupt(head, relation, tail)
-                head_corrupted = head_corrupted.cuda()
-                relation_corrupted = relation_corrupted.cuda()
-                tail_corrupted = tail_corrupted.cuda()
+                head_corrupted = head_corrupted.to(device)
+                relation_corrupted = relation_corrupted.to(device)
+                tail_corrupted = tail_corrupted.to(device)
 
             for hs, rs, ts in batch_by_num(n_batch, head_corrupted, relation_corrupted, tail_corrupted, n_sample=n_train):
                 self.model.zero_grad()
-                label = torch.zeros(len(hs)).type(torch.LongTensor).cuda()
+                label = torch.zeros(len(hs)).type(torch.LongTensor).to(device)
 
                 loss = torch.sum(self.model.softmax_loss(Variable(hs), Variable(rs), Variable(ts), label))
                 loss.backward()
