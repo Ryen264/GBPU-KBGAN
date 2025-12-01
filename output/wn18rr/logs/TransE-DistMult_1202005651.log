@@ -1,0 +1,18 @@
+          kbgan 00:56:51 KBGAN model saved to ./output/wn18rr\kbgan\kbgan_dis-TransE_gen-DistMult.mdl
+          kbgan 00:56:58 Epoch 1/5, D_loss=2.935924, reward=-9.571107
+          kbgan 00:57:01 Epoch 2/5, D_loss=2.633950, reward=-9.311192
+          kbgan 00:57:05 Epoch 3/5, D_loss=2.363274, reward=-9.099658
+          kbgan 00:57:08 Epoch 4/5, D_loss=2.123603, reward=-8.930359
+          kbgan 00:57:11 Epoch 5/5, D_loss=1.902577, reward=-8.806328
+     base_model 00:59:44 MR = 13810.794921875
+MRR = 0.011317528784275055
+Hit@1 = 0.0014358647096362476
+Hit@3 = 0.013401403956604978
+Hit@10 = 0.029514996809189533
+
+          kbgan 00:59:46 Could not auto-compute threshold from provided validation data; using default 0.0
+          kbgan 00:59:46 Accuracy = 0.5000
+Precision = 0.0000
+Recall = 0.0000
+F1 Score = 0.0000
+

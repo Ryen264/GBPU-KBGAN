@@ -2,7 +2,7 @@ import torch
 import os
 import argparse
 
-from config import config, overwrite_config_with_args, logger_init, select_gpu
+from config import config, overwrite_config_with_args, logger_init
 from data_loader import index_entity_relation, graph_size, read_data
 from datasets import sparse_heads_tails, inplace_shuffle
 from kbgan import KBGAN
@@ -63,7 +63,15 @@ def main(argv=None, mode: str=None,
     logger_init()
 
     # Select GPU (if available)
-    torch.cuda.set_device(select_gpu())
+    # gpu_id = select_gpu()
+    # device = None
+    # if gpu_id is not None and torch.cuda.is_available():
+    #     torch.cuda.set_device(gpu_id)
+    #     device = torch.device(f"cuda:{gpu_id}")
+    #     print(f"Using GPU: {device}")
+    # else:
+    #     device = torch.device("cpu")
+    #     print("No GPU available. Running on CPU.")
 
     # Load data
     task_dir = './data/' + _config.task.dir
