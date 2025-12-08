@@ -1,6 +1,0 @@
-          kbgan 00:47:18 KBGAN model saved to ./output/wn18rr\kbgan\kbgan_dis-TransE_gen-DistMult.mdl
-          kbgan 00:47:25 Epoch 1/5, D_loss=2.933592, reward=-9.617219
-          kbgan 00:47:28 Epoch 2/5, D_loss=2.633263, reward=-9.361372
-          kbgan 00:47:32 Epoch 3/5, D_loss=2.368605, reward=-9.139704
-          kbgan 00:47:38 Epoch 4/5, D_loss=2.142056, reward=-8.960317
-          kbgan 00:47:44 Epoch 5/5, D_loss=1.932312, reward=-8.817451
