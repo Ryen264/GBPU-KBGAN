@@ -38,12 +38,12 @@ def main(argv=None, mode: str=None,
 
     # Apply default hyperparameter overrides first
     default_overrides = [
-        "--TransE.n_epoch=10",
-        "--TransE.epoch_per_test=50",
-        "--DistMult.n_epoch=10",
-        "--DistMult.epoch_per_test=50",
-        "--KBGAN.n_epoch=5",
-        "--KBGAN.epoch_per_test=100"
+        "--TransE.n_epoch=1",
+        "--TransE.epoch_per_test=1",
+        "--DistMult.n_epoch=1",
+        "--DistMult.epoch_per_test=1",
+        "--KBGAN.n_epoch=1",
+        "--KBGAN.epoch_per_test=1"
     ]
     overwrite_config_with_args(default_overrides)
 
@@ -61,17 +61,6 @@ def main(argv=None, mode: str=None,
 
     # Init logging now that config is prepared
     logger_init()
-
-    # Select GPU (if available)
-    # gpu_id = select_gpu()
-    # device = None
-    # if gpu_id is not None and torch.cuda.is_available():
-    #     torch.cuda.set_device(gpu_id)
-    #     device = torch.device(f"cuda:{gpu_id}")
-    #     print(f"Using GPU: {device}")
-    # else:
-    #     device = torch.device("cpu")
-    #     print("No GPU available. Running on CPU.")
 
     # Load data
     task_dir = './data/' + _config.task.dir

@@ -4,6 +4,7 @@ import torch.nn.functional as nnf
 from torch.optim import Adam
 from typing import Tuple
 import logging
+import os
 
 from config import config, device
 from datasets import batch_by_size
@@ -65,6 +66,7 @@ class BaseModel(object):
         self.model.constraint()
     def save_model(self, model_filename):
         torch.save(self.model.state_dict(), model_filename)
+        
 
     def load_model(self, model_filename):
         state_dict = torch.load(model_filename, map_location=lambda storage, location: storage.to(device), weights_only=True)
@@ -87,10 +89,10 @@ class BaseModel(object):
         mr_total = mrr_total = 0.0
         k_list = [1, 3, 10]
         hits_total = [0] * len(k_list)
-
+        test_data_no_label = test_data[:3]
         count = 0
         with torch.no_grad():  # Thay volatile=True
-            for batch_head, batch_relation, batch_tail in batch_by_size(config().test_batch_size, *test_data):
+            for batch_head, batch_relation, batch_tail in batch_by_size(config().test_batch_size, *test_data_no_label):
                 batch_size = batch_head.size(0)
 
                 all_var = torch.arange(0, n_entity).unsqueeze(0).expand(batch_size, n_entity).long().to(device)

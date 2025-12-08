@@ -77,7 +77,7 @@ class TransE(BaseModel):
             tail_corrupted = tail_corrupted.to(device)
             epoch_loss = 0
             for h0, r, t0, h1, t1 in batch_by_num(n_batch, head_cuda, relation_cuda, tail_cuda, head_corrupted, tail_corrupted, n_sample=n_train):
-                self.model.zero_grad()
+                self.zero_grad()
                 loss = torch.sum(self.model.pair_loss(Variable(h0), Variable(r), Variable(t0), Variable(h1), Variable(t1)))
                 loss.backward()
                 optimizer.step()
@@ -89,9 +89,9 @@ class TransE(BaseModel):
             os.makedirs(task_dir, exist_ok=True)
             model_path = os.path.join(task_dir, self.config.model_file)
             if (epoch + 1) % self.config.epoch_per_test == 0:
-                test_perf = tester()
+                test_perf = tester()['MRR']
                 if test_perf > best_perf:
-                    self.save(model_path)
+                    self.save_model(model_path)
                     best_perf = test_perf
                     patience_counter = 0
                 else:
@@ -188,7 +188,7 @@ class TransD(BaseModel):
             tail_corrupted = tail_corrupted.to(device)
             epoch_loss = 0
             for h0, r, t0, h1, t1 in batch_by_num(n_batch, head_cuda, relation_cuda, tail_cuda, head_corrupted, tail_corrupted, n_sample=n_train):
-                self.model.zero_grad()
+                self.zero_grad()
                 loss = torch.sum(self.model.pair_loss(Variable(h0), Variable(r), Variable(t0), Variable(h1), Variable(t1)))
                 loss.backward()
 
@@ -201,9 +201,9 @@ class TransD(BaseModel):
             os.makedirs(task_dir, exist_ok=True)
             model_path = os.path.join(task_dir, self.config.model_file)
             if ((epoch + 1) % self.config.epoch_per_test == 0):
-                test_perf = tester()
+                test_perf = tester()['MRR']
                 if (test_perf > best_perf):
-                    self.save(model_path)
+                    self.save_model(model_path)
                     best_perf = test_perf
                     patience_counter = 0
                 else:
@@ -272,7 +272,7 @@ class DistMult(BaseModel):
                 tail_corrupted = tail_corrupted.to(device)
 
             for hs, rs, ts in batch_by_num(n_batch, head_corrupted, relation_corrupted, tail_corrupted, n_sample=n_train):
-                self.model.zero_grad()
+                self.zero_grad()
                 label = torch.zeros(len(hs)).type(torch.LongTensor).to(device)
                 loss = torch.sum(self.model.softmax_loss(Variable(hs), Variable(rs), Variable(ts), label))
                 loss.backward()
@@ -284,9 +284,9 @@ class DistMult(BaseModel):
             logging.info('Epoch %d/%d, Loss=%f', epoch + 1, n_epoch, epoch_loss / n_train)
             model_path = os.path.join(task_dir, self.config.model_file)
             if ((epoch + 1) % self.config.epoch_per_test == 0):
-                test_perf = tester()
+                test_perf = tester()['MRR']
                 if (test_perf > best_perf):
-                    self.save(model_path)
+                    self.save_model(model_path)
                     best_perf = test_perf
                     patience_counter = 0
                 else:
@@ -363,7 +363,7 @@ class ComplEx(BaseModel):
                 tail_corrupted = tail_corrupted.to(device)
 
             for hs, rs, ts in batch_by_num(n_batch, head_corrupted, relation_corrupted, tail_corrupted, n_sample=n_train):
-                self.model.zero_grad()
+                self.zero_grad()
                 label = torch.zeros(len(hs)).type(torch.LongTensor).to(device)
 
                 loss = torch.sum(self.model.softmax_loss(Variable(hs), Variable(rs), Variable(ts), label))
@@ -377,9 +377,9 @@ class ComplEx(BaseModel):
             os.makedirs(task_dir, exist_ok=True)
             model_path = os.path.join(task_dir, self.config.model_file)
             if ((epoch + 1) % self.config.epoch_per_test == 0):
-                test_perf = tester()
+                test_perf = tester()['MRR']
                 if (test_perf > best_perf):
-                    self.save(model_path)
+                    self.save_model(model_path)
                     best_perf = test_perf
                     patience_counter = 0
                 else:

@@ -10,7 +10,7 @@ _config = None
 class ConfigDict(dict):
     __getattr__ = dict.__getitem__
 
-def config(config_path='./config/config_wn18rr.yaml'):
+def config(config_path='.\config\config_wn18rr.yaml'):
     """
     default: config("config_wn18rr.yaml")
     """

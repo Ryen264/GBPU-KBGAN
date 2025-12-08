@@ -33,4 +33,39 @@ htmlcov/
 # Output/temp files
 *.pkl
 *.pickle
+*.tmp# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Log files
+*.log
+logs/
+*.out
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Output/temp files
+*.pkl
+*.pickle
 *.tmp
