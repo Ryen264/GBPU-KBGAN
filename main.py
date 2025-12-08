@@ -83,12 +83,11 @@ def main(argv=None, mode: str=None,
         test_data_with_label = read_data(os.path.join('data/evaluation on TP/wn18rr', 'test.txt'), kb_index, with_label=True)
 
     # Convert to tensors
-    train_data = [torch.LongTensor(vec) for vec in train_data]
-    valid_data = [torch.LongTensor(vec) for vec in valid_data]
-    test_data = [torch.LongTensor(vec) for vec in test_data]
+    train_data  = [torch.LongTensor(vec) for vec in train_data]
+    valid_data  = [torch.LongTensor(vec) for vec in valid_data]
+    test_data   = [torch.LongTensor(vec) for vec in test_data]
 
-    model = KBGAN(discriminator_type="TransE",
-                 generator_type="DistMult")
+    model = KBGAN(discriminator_type="TransE", generator_type="DistMult")
     model.fit(n_entity, n_relation)
 
     print(f"Running mode: {args.mode}")
@@ -106,17 +105,18 @@ def main(argv=None, mode: str=None,
     if args.mode == 'full':
         # Pretrain 2 components
         dis_best_perf, dis_model_path, gen_best_perf, gen_model_path = model.pretrain(heads, tails, train_data, valid_data_with_label,
-                       use_early_stopping=args.early_stopping_pretrain, patience=args.patience, optimizer_name=args.optimizer_name)
+                                                                                        use_early_stopping=args.early_stopping_pretrain, patience=args.patience, optimizer_name=args.optimizer_name)
         
         # Test 2 pretrained components
         dis_metrics = model.evaluate_component("discriminator", heads, tails, test_data)
-        gen_metrics = model.evaluate_component("generator", heads, tails, test_data)
         print(f"Discriminator metrics:\n{dis_metrics}")
+
+        gen_metrics = model.evaluate_component("generator", heads, tails, test_data)
         print(f"Generator metrics:\n{gen_metrics}")
 #
         # Train KBGAN
         best_perf, model_path = model.train(heads, tails, train_data, valid_data,
-                        use_early_stopping=args.early_stopping_train, patience=args.patience, optimizer_name=args.optimizer_name)
+                                            use_early_stopping=args.early_stopping_train, patience=args.patience, optimizer_name=args.optimizer_name)
         
         # Test KBGAN on link prediction
         link_prediction_metrics = model.evaluate_on_link_prediction(heads, tails, test_data)
@@ -127,28 +127,28 @@ def main(argv=None, mode: str=None,
         print(f"Triple classification metrics:\n{triple_classification_metrics}")
 
     elif args.mode =='pretrain':
-        # Pretrain 2 components
         dis_best_perf, dis_model_path, gen_best_perf, gen_model_path = model.pretrain(heads, tails, train_data, valid_data_with_label,
-                        use_early_stopping=args.early_stopping_pretrain, patience=args.patience, optimizer_name=args.optimizer_name)
+                                                                                        use_early_stopping=args.early_stopping_pretrain, patience=args.patience, optimizer_name=args.optimizer_name)
         
         # Test 2 pretrained components
         dis_metrics = model.evaluate_component("discriminator", heads, tails, test_data)
-        gen_metrics = model.evaluate_component("generator", heads, tails, test_data)
         print(f"Discriminator metrics:\n{dis_metrics}")
+
+        gen_metrics = model.evaluate_component("generator", heads, tails, test_data)
         print(f"Generator metrics:\n{gen_metrics}")
 
     elif args.mode == 'train':
         # Load 2 pretrained components
-        dis_model_path = model.load_component(component_role="discriminator", component_path=dis_model_path)
-        gen_model_path = model.load_component(component_role="generator", component_path=gen_model_path)
+        model.load_component(component_role="discriminator", component_path=dis_model_path)
+        model.load_component(component_role="generator", component_path=gen_model_path)
 
         # Train KBGAN
         best_perf, model_path = model.train(heads, tails, train_data, valid_data,
-                        use_early_stopping=args.early_stopping_train, patience=args.patience, optimizer_name=args.optimizer_name)
+                                            use_early_stopping=args.early_stopping_train, patience=args.patience, optimizer_name=args.optimizer_name)
         
     elif args.mode == 'evaluate_on_link_prediction':
         # Load pretrained KBGAN
-        model_path = model.load()
+        model.load()
 
         # Test KBGAN on link prediction
         link_prediction_metrics = model.evaluate_on_link_prediction(heads, tails, test_data)
@@ -156,7 +156,7 @@ def main(argv=None, mode: str=None,
 
     elif args.mode == 'evaluate_on_triple_classification':
         # Load pretrained KBGAN
-        model_path = model.load()
+        model.load()
 
         # Test KBGAN on triple classification
         triple_classification_metrics, threshold, predictions, scores_list = model.evaluate_on_triple_classification(test_data_with_label, valid_data_with_label, threshold=None, auto_threshold=True)

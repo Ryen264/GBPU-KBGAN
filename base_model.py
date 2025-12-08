@@ -60,14 +60,16 @@ class BaseModel(object):
     def train(self, train_data, corrupter, tester,
               use_early_stopping=False, patience=10, optimizer_name='Adam') -> Tuple[float, str]:
         pass
+
     def zero_grad(self):
         self.model.zero_grad()
-    def constraint(self):
+
+    def constraint(self) -> torch.Tensor:
         self.model.constraint()
+        
     def save_model(self, model_filename):
         torch.save(self.model.state_dict(), model_filename)
         
-
     def load_model(self, model_filename):
         state_dict = torch.load(model_filename, map_location=lambda storage, location: storage.to(device), weights_only=True)
         self.model.load_state_dict(state_dict)
@@ -76,12 +78,15 @@ class BaseModel(object):
         if not hasattr(self, 'opt'):
             self.opt = Adam(self.model.parameters(), weight_decay=self.weight_decay)
     
-    def get_score(self, head, relation, tail):
+    def get_score(self, head, relation, tail) -> torch.Tensor:
         return self.model.score(head, relation, tail)
-    def get_prob_logit(self, head, relation, tail):
+    
+    def get_prob_logit(self, head, relation, tail) -> torch.Tensor:
         return self.model.prob_logit(head, relation, tail)
-    def get_pair_loss(self, head, relation, tail, head_bad, tail_bad):
+    
+    def get_pair_loss(self, head, relation, tail, head_bad, tail_bad) -> torch.Tensor:
         return self.model.pair_loss(head, relation, tail, head_bad, tail_bad)
+    
     def evaluate(self, test_data, n_entity, heads, tails, filt=True) -> dict:
         """
         Evaluate the model on Link Prediction task.
