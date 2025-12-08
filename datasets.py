@@ -4,7 +4,7 @@ import torch
 import numpy as np
 from numpy.random import choice
 
-def sparse_heads_tails(n_entity, train_data, valid_data=None, test_data=None):
+def sparse_heads_tails(n_entity, train_data, valid_data=None, test_data=None) -> tuple[dict, dict]:
     if train_data:
         train_head, train_relation, train_tail = train_data
     else:
@@ -40,7 +40,7 @@ def sparse_heads_tails(n_entity, train_data, valid_data=None, test_data=None):
         tails_sparse[k] = torch.sparse_coo_tensor(indices, values, torch.Size([n_entity]), dtype=torch.float32)
     return heads_sparse, tails_sparse
 
-def inplace_shuffle(*lists):
+def inplace_shuffle(*lists) -> None:
     idx = []
     for i in range(len(lists[0])):
         idx.append(randint(0, i+1))
@@ -74,7 +74,7 @@ def batch_by_size(batch_size, *lists, n_sample=None):
         else:
             yield ret[0]
 
-def get_bern_prob(data, n_relation):
+def get_bern_prob(data, n_relation) -> torch.Tensor:
     head, relation, tail = data
     edges = defaultdict(lambda: defaultdict(lambda: set()))
     rev_edges = defaultdict(lambda: defaultdict(lambda: set()))
@@ -93,7 +93,7 @@ class BernCorrupter(object):
         self.bern_prob = get_bern_prob(data, n_relation)
         self.n_entity = n_entity
 
-    def corrupt(self, head, relation, tail):
+    def corrupt(self, head, relation, tail) -> tuple[torch.Tensor, torch.Tensor]:
         prob = self.bern_prob[relation]
         selection = torch.bernoulli(prob).numpy().astype('int64')
         entity_random = choice(self.n_entity, len(head))
@@ -107,7 +107,7 @@ class BernCorrupterMulti(object):
         self.n_entity = n_entity
         self.n_sample = n_sample
 
-    def corrupt(self, head, relation, tail, keep_truth=True):
+    def corrupt(self, head, relation, tail, keep_truth=True) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         n = len(head)
         prob = self.bern_prob[relation]
         selection = torch.bernoulli(prob).numpy().astype('bool')

@@ -9,7 +9,7 @@ import os
 from config import config, device
 from datasets import batch_by_size
 
-def mr_mrr_hitsk(scores, target, k_list=[1, 3, 10]):
+def mr_mrr_hitsk(scores, target, k_list=[1, 3, 10]) -> Tuple[int, float, list[int], float]:
     _, sorted_idx = torch.sort(scores)
     find_target = sorted_idx == target
     target_rank = torch.nonzero(find_target)[0, 0] + 1
@@ -20,33 +20,33 @@ class BaseModule(nn.Module):
     def __init__(self):
         super().__init__()
 
-    def init_weight(self):
+    def init_weight(self) -> None:
         pass
 
-    def forward(self, head, relation, tail):
+    def forward(self, head, relation, tail) -> torch.Tensor:
         pass
 
-    def dist(self, head, relation, tail):
+    def dist(self, head, relation, tail) -> torch.Tensor:
         pass
 
-    def score(self, head, relation, tail):
+    def score(self, head, relation, tail) -> torch.Tensor:
         pass
 
-    def prob_logit(self, head, relation, tail):
+    def prob_logit(self, head, relation, tail) -> torch.Tensor:
         pass
 
-    def constraint(self):
+    def constraint(self) -> None:
         pass
 
-    def prob(self, head, relation, tail):
+    def prob(self, head, relation, tail) -> torch.Tensor:
         return nnf.softmax(self.prob_logit(head, relation, tail), dim=-1)
 
-    def pair_loss(self, head, relation, tail, head_bad, tail_bad):
+    def pair_loss(self, head, relation, tail, head_bad, tail_bad) -> torch.Tensor:
         d_good = self.dist(head, relation, tail)
         d_bad = self.dist(head_bad, relation, tail_bad)
         return nnf.relu(self.margin + d_good - d_bad)
 
-    def softmax_loss(self, head, relation, tail, truth):
+    def softmax_loss(self, head, relation, tail, truth) -> torch.Tensor:
         probs = self.prob(head, relation, tail)
         n = probs.size(0)
         truth_probs = torch.log(probs[torch.arange(0, n).type(torch.LongTensor).to(device), truth] + 1e-30)
@@ -61,20 +61,20 @@ class BaseModel(object):
               use_early_stopping=False, patience=10, optimizer_name='Adam') -> Tuple[float, str]:
         pass
 
-    def zero_grad(self):
+    def zero_grad(self) -> None:
         self.model.zero_grad()
 
-    def constraint(self) -> torch.Tensor:
+    def constraint(self) -> None:
         self.model.constraint()
         
-    def save_model(self, model_filename):
+    def save_model(self, model_filename) -> None:
         torch.save(self.model.state_dict(), model_filename)
         
-    def load_model(self, model_filename):
+    def load_model(self, model_filename) -> None:
         state_dict = torch.load(model_filename, map_location=lambda storage, location: storage.to(device), weights_only=True)
         self.model.load_state_dict(state_dict)
 
-    def _ensure_optimizer(self):
+    def _ensure_optimizer(self) -> None:
         if not hasattr(self, 'opt'):
             self.opt = Adam(self.model.parameters(), weight_decay=self.weight_decay)
     

@@ -21,21 +21,21 @@ class TransEModule(BaseModule):
         self.entity_embed = nn.Embedding(n_entity, config.dim)
         self.init_weight()
 
-    def init_weight(self):
+    def init_weight(self) -> None:
         for param in self.parameters():
             param.data.normal_(1 / param.size(1) ** 0.5)
             param.data.renorm_(2, 0, 1)
 
-    def forward(self, head, relation, tail):
+    def forward(self, head, relation, tail) -> torch.Tensor:
         return torch.norm(self.entity_embed(tail) - self.entity_embed(head) - self.relation_embed(relation) + 1e-30, p=self.p, dim=-1)
 
-    def dist(self, head, relation, tail):
+    def dist(self, head, relation, tail) -> torch.Tensor:
         return self.forward(head, relation, tail)
 
-    def score(self, head, relation, tail):
+    def score(self, head, relation, tail) -> torch.Tensor:
         return self.forward(head, relation, tail)
 
-    def prob_logit(self, head, relation, tail):
+    def prob_logit(self, head, relation, tail) -> torch.Tensor:
         return -self.forward(head, relation ,tail) / self.temp
 
     def constraint(self):
@@ -115,28 +115,28 @@ class TransDModule(BaseModule):
         self.proj_entity_embed = nn.Embedding(n_entity, config.dim)
         self.init_weight()
 
-    def init_weight(self):
+    def init_weight(self) -> None:
         for param in self.parameters():
             param.data.normal_(1 / param.size(1) ** 0.5)
             param.data.renorm_(2, 0, 1)
 
-    def forward(self, head, relation, tail):
+    def forward(self, head, relation, tail) -> torch.Tensor:
         head_proj = self.entity_embed(head) +\
                    torch.sum(self.proj_entity_embed(head) * self.entity_embed(head), dim=-1, keepdim=True) * self.proj_relation_embed(relation)
         tail_proj = self.entity_embed(tail) +\
                    torch.sum(self.proj_entity_embed(tail) * self.entity_embed(tail), dim=-1, keepdim=True) * self.proj_relation_embed(relation)
         return torch.norm(tail_proj - self.relation_embed(relation) - head_proj + 1e-30, p=self.p, dim=-1)
 
-    def dist(self, head, relation, tail):
+    def dist(self, head, relation, tail) -> torch.Tensor:
         return self.forward(head, relation, tail)
 
-    def score(self, head, relation, tail):
+    def score(self, head, relation, tail) -> torch.Tensor:
         return self.forward(head, relation, tail)
 
-    def prob_logit(self, head, relation, tail):
+    def prob_logit(self, head, relation, tail) -> torch.Tensor:
         return -self.forward(head, relation ,tail) / self.temp
 
-    def constraint(self):
+    def constraint(self) -> None:
         for param in self.parameters():
             param.data.renorm_(2, 0, 1)
 
@@ -148,7 +148,7 @@ class TransD(BaseModel):
         self.config = config
         self.path = None
 
-    def load_vec(self, vecpath):
+    def load_vec(self, vecpath) -> None:
         entity_mat = np.loadtxt(os.path.join(vecpath, 'entity2vec.vec'))
         self.model.entity_embed.weight.data.copy_(torch.from_numpy(entity_mat))
 
@@ -224,16 +224,16 @@ class DistMultModule(BaseModule):
         self.entity_embed = nn.Embedding(n_entity, config.dim)
         self.entity_embed.weight.data.div_((config.dim / sigma ** 2) ** (1 / 6))
 
-    def forward(self, head, relation, tail):
+    def forward(self, head, relation, tail) -> torch.Tensor:
         return torch.sum(self.entity_embed(tail) * self.entity_embed(head) * self.relation_embed(relation), dim=-1)
 
-    def dist(self, head, relation, tail):
+    def dist(self, head, relation, tail) -> torch.Tensor:
         return -self.forward(head, relation, tail)
     
-    def score(self, head, relation, tail):
+    def score(self, head, relation, tail) -> torch.Tensor:
         return -self.forward(head, relation, tail)
 
-    def prob_logit(self, head, relation, tail):
+    def prob_logit(self, head, relation, tail) -> torch.Tensor:
         return self.forward(head, relation, tail)
 
 class DistMult(BaseModel):
@@ -308,23 +308,23 @@ class ComplExModule(BaseModule):
         self.entity_im_embed = nn.Embedding(n_entity, config.dim)
         self.init_weight()
 
-    def init_weight(self):
+    def init_weight(self) -> None:
         for param in self.parameters():
             param.data.div_((config.dim / self.sigma ** 2) ** (1 / 6))
 
-    def forward(self, head, relation, tail):
+    def forward(self, head, relation, tail) -> torch.Tensor:
         return torch.sum(self.relation_re_embed(relation) * self.entity_re_embed(head) * self.entity_re_embed(tail), dim=-1) \
             + torch.sum(self.relation_re_embed(relation) * self.entity_im_embed(head) * self.entity_im_embed(tail), dim=-1) \
             + torch.sum(self.relation_im_embed(relation) * self.entity_re_embed(head) * self.entity_im_embed(tail), dim=-1) \
             - torch.sum(self.relation_im_embed(relation) * self.entity_im_embed(head) * self.entity_re_embed(tail), dim=-1)
 
-    def dist(self, head, relation, tail):
+    def dist(self, head, relation, tail) -> torch.Tensor:
         return -self.forward(head, relation, tail)
     
-    def score(self, head, relation, tail):
+    def score(self, head, relation, tail) -> torch.Tensor:
         return -self.forward(head, relation, tail)
 
-    def prob_logit(self, head, relation, tail):
+    def prob_logit(self, head, relation, tail) -> torch.Tensor:
         return self.forward(head, relation, tail)
 
 class ComplEx(BaseModel):

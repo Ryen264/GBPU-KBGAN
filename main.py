@@ -79,8 +79,8 @@ def main(argv=None, mode: str=None,
 
     # For WN18RR, we need to read data with labels for triple classification
     if _config.task.dir == 'wn18rr':
-        valid_data_with_label = read_data(os.path.join('data/evaluation on TP/wn18rr', 'valid.txt'), kb_index, with_label=True)
-        test_data_with_label = read_data(os.path.join('data/evaluation on TP/wn18rr', 'test.txt'), kb_index, with_label=True)
+        valid_data_with_label   = read_data(os.path.join('data/evaluation on TP/wn18rr', 'valid.txt'), kb_index, with_label=True)
+        test_data_with_label    = read_data(os.path.join('data/evaluation on TP/wn18rr', 'test.txt'), kb_index, with_label=True)
 
     # Convert to tensors
     train_data  = [torch.LongTensor(vec) for vec in train_data]

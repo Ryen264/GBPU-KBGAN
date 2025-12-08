@@ -4,7 +4,7 @@ import logging
 
 KBIndex = namedtuple('KBIndex', ['entity_list', 'relation_list', 'entity_id', 'relation_id'])
 
-def index_entity_relation(*filenames):
+def index_entity_relation(*filenames) -> KBIndex:
     entity_set = set()
     relation_set = set()
     for filename in filenames:
@@ -20,10 +20,10 @@ def index_entity_relation(*filenames):
     relation_id = dict(zip(relation_list, count()))
     return KBIndex(entity_list, relation_list, entity_id, relation_id)
 
-def graph_size(kb_index):
+def graph_size(kb_index) -> tuple[int, int]:
     return len(kb_index.entity_id), len(kb_index.relation_id)
 
-def read_data(filename, kb_index, with_label=False):
+def read_data(filename, kb_index, with_label=False) -> tuple[list[int], list[int], list[int]] | tuple[list[int], list[int], list[int], list[int]]:
     heads, relations, tails = [], [], []
     labels = []
     skipped_count = 0
