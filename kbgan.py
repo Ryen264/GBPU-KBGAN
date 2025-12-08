@@ -70,7 +70,7 @@ class Component():
             print(f"Input model type should be in list [\"TransE\", \"TransD\", \"DistMult\", \"ComplEx\"]! Default model type: \"TransE\".")
             self.model_type = "TransE"
 
-        self.model_config = None
+        self.model_config = config()[self.model_type]
         self.model = None
         self.model_path = None
         self.n_entity = None
@@ -99,7 +99,7 @@ class Component():
         self.model_path = model_path if model_path is not None else os.path.join(output_dir, self.model_config.model_file)
     
         print(f"Loading component: {self.model_type} model.")
-        self.model.load(self.model_path)
+        self.model.load_model(self.model_path)
         print(f"Loaded component by path: {self.model_path}")
 
     def get_score(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
@@ -302,6 +302,9 @@ class KBGAN():
     def fit(self, n_entity: int, n_relation: int) -> None:
         self.n_entity = n_entity
         self.n_relation = n_relation
+        self.discriminator.fit(n_entity, n_relation)
+        self.generator.fit(n_entity, n_relation)
+
 
     def load_component(self, component_role: str, component_path: str=None) -> None:
         """
@@ -368,13 +371,13 @@ class KBGAN():
                 return None
             
             print(f"Testing component: {self.discriminator_type} model.")
-            metrics = self.discriminator.evaluate(test_data, self.n_entity, heads, tails)
+            metrics = self.discriminator.evaluate(test_data, heads, tails)
         elif component_role == "generator":
             if (self.generator_path is None):
                 print(f"Component must be pretrained before being tested!")
                 return None
             print(f"Testing component: {self.generator_type} model.")
-            metrics = self.generator.evaluate(test_data, self.n_entity, heads, tails)
+            metrics = self.generator.evaluate(test_data, heads, tails)
         return metrics
 
     def load(self, kbgan_path: str=None) -> None:
