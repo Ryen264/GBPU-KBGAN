@@ -8,24 +8,7 @@ import logging
 from config import config
 import config as _config_module
 from datasets import batch_by_size
-
-def link_prediction_metrics(scores, target, k_list=[1, 3, 10]) -> Tuple[int, float, list[int], float]:
-    """
-    Compute link prediction metrics (MR, MRR, Hits@K).
-    
-    Args:
-        scores: Ranking scores for entities
-        target: Target entity index
-        k_list: List of K values for Hits@K metric
-    
-    Returns:
-        Tuple of (target_rank, reciprocal_rank, hits_at_k_list, target_score)
-    """
-    _, sorted_idx = torch.sort(scores)
-    find_target = sorted_idx == target
-    target_rank = int(torch.nonzero(find_target)[0, 0] + 1)
-    target_score = float(scores[target].item())  # Get the score of the target entity
-    return target_rank, 1 / target_rank, [int(target_rank <= k) for k in k_list], target_score
+from metrics import ranking_metrics
 
 class BaseModule(nn.Module):
     def __init__(self):
@@ -115,12 +98,12 @@ class BaseModel(object):
     def constraint(self) -> None:
         self.model.constraint()
         
-    def save_model(self, model_filename) -> None:
-        torch.save(self.model.state_dict(), model_filename)
+    def save(self, model_path) -> None:
+        torch.save(self.model.state_dict(), model_path)
         
-    def load_model(self, model_filename) -> None:
+    def load(self, model_path) -> None:
         # Ensure model is loaded onto the chosen device
-        state_dict = torch.load(model_filename, map_location=lambda storage, location: storage.to(self.device), weights_only=True)
+        state_dict = torch.load(model_path, map_location=lambda storage, location: storage.to(self.device), weights_only=True)
         self.model.load_state_dict(state_dict)
 
     def _ensure_optimizer(self) -> None:
@@ -175,8 +158,8 @@ class BaseModel(object):
                             tail_scores += tails[key_tail].to(self.device) * 1e30
                             tail_scores[tail_id] = tmp
 
-                    head_mr, head_mrr, head_hits, head_target_score = link_prediction_metrics(scores=head_scores, target=head_id, k_list=k_list)
-                    tail_mr, tail_mrr, tail_hits, tail_target_score = link_prediction_metrics(scores=tail_scores, target=tail_id, k_list=k_list)                    
+                    head_mr, head_mrr, head_hits, head_target_score = ranking_metrics(scores=head_scores, target=head_id, k_list=k_list)
+                    tail_mr, tail_mrr, tail_hits, tail_target_score = ranking_metrics(scores=tail_scores, target=tail_id, k_list=k_list)                    
                     
                     mr_total += (head_mr + tail_mr)
                     mrr_total += (head_mrr + tail_mrr)

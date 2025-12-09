@@ -11,79 +11,7 @@ from config import device
 from config import config, overwrite_config_with_args, logger_init
 from datasets import batch_by_num, BernCorrupterMulti, BernCorrupter
 from models import TransE, TransD, DistMult, ComplEx
-
-def triple_classification_metrics(predictions: list, true_labels: list, scores: list = None) -> dict:
-    """
-    Compute triple classification metrics including accuracy, precision, recall, F1, PR AUC, and ROC AUC.
-    
-    Args:
-        predictions: Binary predictions (0 or 1)
-        true_labels: Ground truth binary labels (0 or 1)
-        scores: Optional confidence scores for AUC calculations. If None, uses predictions as scores.
-    
-    Returns:
-        Dictionary with keys: 'accuracy', 'precision', 'recall', 'f1', 'pr_auc', 'roc_auc'
-    """
-    try:
-        y_pred = np.asarray(predictions)
-        y_true = np.asarray(true_labels)
-    except Exception as e:
-        raise ValueError(f"Error converting inputs to numpy arrays: {e}")
-    if y_pred.shape != y_true.shape:
-        raise ValueError("Predictions and true labels must have the same shape.")
-
-    # TP: y_pred == 1 AND y_true == 1
-    TP = np.sum((y_pred == 1) & (y_true == 1))
-    # TN: y_pred == 0 AND y_true == 0
-    TN = np.sum((y_pred == 0) & (y_true == 0))
-    # FP: y_pred == 1 AND y_true == 0
-    FP = np.sum((y_pred == 1) & (y_true == 0))
-    # FN: y_pred == 0 AND y_true == 1
-    FN = np.sum((y_pred == 0) & (y_true == 1))
-
-    # (TP + TN) / (TP + TN + FP + FN)
-    total_samples = TP + TN + FP + FN
-    accuracy = (TP + TN) / total_samples if total_samples > 0 else 0.0
-
-    # TP / (TP + FP)
-    precision_denominator = TP + FP
-    precision = TP / precision_denominator if precision_denominator > 0 else 0.0
-
-    # TP / (TP + FN)
-    recall_denominator = TP + FN
-    recall = TP / recall_denominator if recall_denominator > 0 else 0.0
-
-    # 2 * (Precision * Recall) / (Precision + Recall)
-    f1_denominator = precision + recall
-    f1_score = 2 * (precision * recall) / f1_denominator if f1_denominator > 0 else 0.0
-    
-    # Compute PR AUC and ROC AUC if scores are provided
-    pr_auc = 0.0
-    roc_auc = 0.0
-    if scores is not None:
-        try:
-            from sklearn.metrics import auc, precision_recall_curve, roc_curve, roc_auc_score
-            y_scores = np.asarray(scores)
-            
-            # ROC AUC
-            roc_auc = roc_auc_score(y_true, y_scores)
-            
-            # PR AUC
-            precision_curve, recall_curve, _ = precision_recall_curve(y_true, y_scores)
-            pr_auc = auc(recall_curve, precision_curve)
-        except ImportError:
-            logging.warning("scikit-learn not available. PR AUC and ROC AUC set to 0.0")
-        except Exception as e:
-            logging.warning(f"Error computing AUC metrics: {e}. PR AUC and ROC AUC set to 0.0")
-    
-    return {
-        'accuracy': accuracy,
-        'precision': precision,
-        'recall': recall,
-        'f1': f1_score,
-        'pr_auc': pr_auc,
-        'roc_auc': roc_auc
-    }
+from metrics import classification_metrics
 
 class Component():
     def __init__(self, role: str, model_type: str):
@@ -115,26 +43,21 @@ class Component():
         self.n_entity = n_entity
         self.n_relation = n_relation
 
-    def load(self, model_path: str=None) -> None:
+    def load(self, model_path: str) -> None:
         if (self.n_entity is None or self.n_relation is None):
-            print(f"Component must be fitted before being loaded!")
-            return None
-        
-        if self.model_type == 'TransE':
-            self.model = TransE(self.n_entity, self.n_relation, self.model_config)
-        elif self.model_type == 'TransD':
-            self.model = TransD(self.n_entity, self.n_relation, self.model_config)
-        elif self.model_type == 'DistMult':
-            self.model = DistMult(self.n_entity, self.n_relation, self.model_config)
-        elif self.model_type == 'ComplEx':
-            self.model = ComplEx(self.n_entity, self.n_relation, self.model_config)
-
-        output_dir = './output/' + config().task.dir + '/models'
-        self.model_path = model_path if model_path is not None else os.path.join(output_dir, self.model_config.model_file)
+            raise ValueError("Component must be fitted before being loaded!")
     
-        print(f"Loading component: {self.model_type} model.")
-        self.model.load_model(self.model_path)
-        print(f"Loaded component successfully by path: {self.model_path}")
+        print(f"Loading component by path: {model_path}")
+        self.model.load_model(model_path)
+        print(f"Loaded component successfully: {self.model_type} model.")
+    
+    def save(self, model_path: str) -> None:
+        if (self.n_entity is None or self.n_relation is None):
+            raise ValueError("Component must be fitted before being saved!")
+        
+        print(f"Saving component by path: {model_path}")
+        self.model.save(model_path)
+        print(f"Saved component successfully: {self.model_type} model.")
 
     def get_score(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
         return self.model.get_score(head, relation, tail)
@@ -376,13 +299,21 @@ class KBGAN():
             print(f"Testing generator: {self.generator_type} model.")
             return self.generator.evaluate(test_data, heads, tails)
 
-    def load(self, kbgan_path: str=None) -> None:
+    def load(self, kbgan_path: str) -> None:
         if (self.n_entity is None or self.n_relation is None):
             raise ValueError("Model must be fitted before being loaded!")
         
-        print(f"Loading KBGAN: {self.discriminator_type} discriminator, {self.generator_type} generator.")
+        print(f"Loading KBGAN (discriminator) by path: {kbgan_path}")
         self.discriminator.load(kbgan_path)
-        print(f"Loaded KBGAN discriminator successfully by path: {kbgan_path}")
+        print(f"Loaded KBGAN (discriminator) successfully.")
+
+    def save(self, kbgan_path: str) -> None:
+        if (self.n_entity is None or self.n_relation is None):
+            raise ValueError("Model must be fitted before being saved!")
+        
+        print(f"Saving KBGAN (discriminator) by path: {kbgan_path}")
+        self.discriminator.save(kbgan_path)
+        print(f"Saved KBGAN (discriminator) successfully.")
 
     def pretrain(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data: tuple,
                 use_early_stopping: bool=False, patience: int=10, optimizer_name: str='Adam') -> Tuple[float, str, float, str]:
@@ -480,7 +411,7 @@ class KBGAN():
             avg_reward = epoch_reward / n_train
 
             logging.info('Epoch %d/%d, D_loss=%f, reward=%f', epoch + 1, n_epoch, avg_loss, avg_reward)
-            save_dir = './output/' + config().task.dir + '/kbgan/'
+            save_dir = '.\\output\\' + config().dataset + '\\' + config().task
             os.makedirs(save_dir, exist_ok=True)
             kbgan_path = os.path.join(save_dir, model_name)
 
@@ -490,7 +421,7 @@ class KBGAN():
                 if perf > best_perf:
                     best_perf = perf
                     patience_counter = 0
-                    self.discriminator.model.save(kbgan_path)
+                    self.discriminator.save(kbgan_path)
                 else:
                     patience_counter += 1
                     
@@ -559,7 +490,7 @@ class KBGAN():
                 predictions.append(1 if score < threshold else 0)
             else:
                 predictions.append(1 if score > threshold else 0)
-        result_metrics = triple_classification_metrics(predictions, list(labels) if labels is not None else [], scores=scores_list)
+        result_metrics = classification_metrics(predictions, list(labels) if labels is not None else [], scores=scores_list)
 
         metrics = {}
         metrics['Accuracy'] = result_metrics['accuracy']
@@ -568,6 +499,7 @@ class KBGAN():
         metrics['F1'] = result_metrics['f1']
         metrics['PR_AUC'] = result_metrics['pr_auc']
         metrics['ROC_AUC'] = result_metrics['roc_auc']
+
         metrics_str = f"Accuracy = {result_metrics['accuracy']:.4f}\n"
         metrics_str += f"Precision = {result_metrics['precision']:.4f}\n"
         metrics_str += f"Recall = {result_metrics['recall']:.4f}\n"

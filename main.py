@@ -27,7 +27,7 @@ def parse_args():
 
 def main(argv=None, mode: str=None,
          early_stopping_pretrain: bool=None, early_stopping_train: bool=None, patience: int=None, optimizer_name: str=None):
-    args = parse_args() if argv is None else parse_args()
+    args = parse_args()
 
     # Load configuration (default or provided file)
     if args.config_file:
@@ -63,7 +63,7 @@ def main(argv=None, mode: str=None,
     logger_init()
 
     # Load data
-    task_dir = '.\\data\\' + _config.task.dir
+    task_dir = '.\\data\\' + _config.dataset
     kb_index = index_entity_relation(
         os.path.join(task_dir, 'train.txt'),
         os.path.join(task_dir, 'valid.txt'),
@@ -77,10 +77,10 @@ def main(argv=None, mode: str=None,
     test_data = read_data(os.path.join(task_dir, 'test.txt'), kb_index)
     heads, tails = sparse_heads_tails(n_entity, train_data, valid_data, test_data)
 
-    # For WN18RR, we need to read data with labels for triple classification
-    if _config.task.dir == 'wn18rr':
-        valid_data_with_label   = read_data(os.path.join('.\\data\\evaluation on TP\\wn18rr', 'valid.txt'), kb_index, with_label=True)
-        test_data_with_label    = read_data(os.path.join('.\\data\\evaluation on TP\\wn18rr', 'test.txt'), kb_index, with_label=True)
+    # For task triple-classification, we need to read data with labels
+    if _config.task == 'triple-classification' or _config.task == 'all':
+        valid_data_with_label   = read_data(os.path.join('.\\data\\' + _config.dataset + '_w_labels', 'valid.txt'), kb_index, with_label=True)
+        test_data_with_label    = read_data(os.path.join('.\\data\\' + _config.dataset + '_w_labels', 'test.txt'), kb_index, with_label=True)
 
     # Convert to tensors
     train_data  = [torch.LongTensor(vec) for vec in train_data]
@@ -132,10 +132,10 @@ def main(argv=None, mode: str=None,
         
         # Test 2 pretrained components
         dis_metrics = model.evaluate_component("discriminator", heads, tails, test_data)
-        print(f"Discriminator metrics:\n{dis_metrics}")
+        print(f"Discriminator ranking metrics:\n{dis_metrics}")
 
         gen_metrics = model.evaluate_component("generator", heads, tails, test_data)
-        print(f"Generator metrics:\n{gen_metrics}")
+        print(f"Generator ranking metrics:\n{gen_metrics}")
 
     elif args.mode == 'train':
         # Load 2 pretrained components
@@ -159,8 +159,9 @@ def main(argv=None, mode: str=None,
         model.load()
 
         # Test KBGAN on triple classification
-        triple_classification_metrics, threshold, predictions, scores_list = model.evaluate_on_triple_classification(test_data_with_label, valid_data_with_label, threshold=None, auto_threshold=True)
+        triple_classification_metrics, threshold, predictions, scores_list = model.evaluate_on_triple_classification(test_data_with_label, valid_data_with_label,
+                                                                                                                     threshold=None, auto_threshold=True)
         print(f"Triple classification metrics:\n{triple_classification_metrics}")
 
-if __name__ == '__main__':
+if __name__ == '__main__':    
     main(mode='full', early_stopping_pretrain=True, early_stopping_train=True, patience=100, optimizer_name='Adagrad')
