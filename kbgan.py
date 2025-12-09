@@ -12,7 +12,18 @@ from config import config, overwrite_config_with_args, logger_init
 from datasets import batch_by_num, BernCorrupterMulti, BernCorrupter
 from models import TransE, TransD, DistMult, ComplEx
 
-def acc_pre_rec_f1(predictions: list, true_labels: list) -> Tuple[float, float, float, float]:
+def triple_classification_metrics(predictions: list, true_labels: list, scores: list = None) -> dict:
+    """
+    Compute triple classification metrics including accuracy, precision, recall, F1, PR AUC, and ROC AUC.
+    
+    Args:
+        predictions: Binary predictions (0 or 1)
+        true_labels: Ground truth binary labels (0 or 1)
+        scores: Optional confidence scores for AUC calculations. If None, uses predictions as scores.
+    
+    Returns:
+        Dictionary with keys: 'accuracy', 'precision', 'recall', 'f1', 'pr_auc', 'roc_auc'
+    """
     try:
         y_pred = np.asarray(predictions)
         y_true = np.asarray(true_labels)
@@ -45,7 +56,34 @@ def acc_pre_rec_f1(predictions: list, true_labels: list) -> Tuple[float, float, 
     # 2 * (Precision * Recall) / (Precision + Recall)
     f1_denominator = precision + recall
     f1_score = 2 * (precision * recall) / f1_denominator if f1_denominator > 0 else 0.0
-    return accuracy, precision, recall, f1_score
+    
+    # Compute PR AUC and ROC AUC if scores are provided
+    pr_auc = 0.0
+    roc_auc = 0.0
+    if scores is not None:
+        try:
+            from sklearn.metrics import auc, precision_recall_curve, roc_curve, roc_auc_score
+            y_scores = np.asarray(scores)
+            
+            # ROC AUC
+            roc_auc = roc_auc_score(y_true, y_scores)
+            
+            # PR AUC
+            precision_curve, recall_curve, _ = precision_recall_curve(y_true, y_scores)
+            pr_auc = auc(recall_curve, precision_curve)
+        except ImportError:
+            logging.warning("scikit-learn not available. PR AUC and ROC AUC set to 0.0")
+        except Exception as e:
+            logging.warning(f"Error computing AUC metrics: {e}. PR AUC and ROC AUC set to 0.0")
+    
+    return {
+        'accuracy': accuracy,
+        'precision': precision,
+        'recall': recall,
+        'f1': f1_score,
+        'pr_auc': pr_auc,
+        'roc_auc': roc_auc
+    }
 
 class Component():
     def __init__(self, role: str, model_type: str):
@@ -258,7 +296,8 @@ class Component():
                 else:
                     predictions.append(1 if score > threshold else 0)
             
-            _, _, _, f1 = acc_pre_rec_f1(predictions, labels)
+            metrics = triple_classification_metrics(predictions, labels, scores=scores_list)
+            f1 = metrics['f1']
             
             if f1 > best_f1:
                 best_f1 = f1
@@ -520,16 +559,20 @@ class KBGAN():
                 predictions.append(1 if score < threshold else 0)
             else:
                 predictions.append(1 if score > threshold else 0)
-        accuracy, precision, recall, f1 = acc_pre_rec_f1(predictions, list(labels) if labels is not None else [] )
+        result_metrics = triple_classification_metrics(predictions, list(labels) if labels is not None else [], scores=scores_list)
 
         metrics = {}
-        metrics['Accuracy'] = accuracy
-        metrics['Precision'] = precision
-        metrics['Recall'] = recall
-        metrics['F1'] = f1
-        metrics_str = f"Accuracy = {accuracy:.4f}\n"
-        metrics_str += f"Precision = {precision:.4f}\n"
-        metrics_str += f"Recall = {recall:.4f}\n"
-        metrics_str += f"F1 Score = {f1:.4f}\n"        
+        metrics['Accuracy'] = result_metrics['accuracy']
+        metrics['Precision'] = result_metrics['precision']
+        metrics['Recall'] = result_metrics['recall']
+        metrics['F1'] = result_metrics['f1']
+        metrics['PR_AUC'] = result_metrics['pr_auc']
+        metrics['ROC_AUC'] = result_metrics['roc_auc']
+        metrics_str = f"Accuracy = {result_metrics['accuracy']:.4f}\n"
+        metrics_str += f"Precision = {result_metrics['precision']:.4f}\n"
+        metrics_str += f"Recall = {result_metrics['recall']:.4f}\n"
+        metrics_str += f"F1 Score = {result_metrics['f1']:.4f}\n"
+        metrics_str += f"PR AUC = {result_metrics['pr_auc']:.4f}\n"
+        metrics_str += f"ROC AUC = {result_metrics['roc_auc']:.4f}\n"
         logging.info(metrics_str)
         return metrics, threshold, predictions, scores_list

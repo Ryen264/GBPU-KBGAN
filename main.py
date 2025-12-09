@@ -38,12 +38,12 @@ def main(argv=None, mode: str=None,
 
     # Apply default hyperparameter overrides first
     default_overrides = [
-        "--TransE.n_epoch=1",
-        "--TransE.epoch_per_test=1",
-        "--DistMult.n_epoch=1",
-        "--DistMult.epoch_per_test=1",
-        "--KBGAN.n_epoch=1",
-        "--KBGAN.epoch_per_test=1"
+        "--TransE.n_epoch=2",
+        "--TransE.epoch_per_test=5",
+        "--DistMult.n_epoch=2",
+        "--DistMult.epoch_per_test=5",
+        "--KBGAN.n_epoch=2",
+        "--KBGAN.epoch_per_test=5"
     ]
     overwrite_config_with_args(default_overrides)
 
@@ -63,7 +63,7 @@ def main(argv=None, mode: str=None,
     logger_init()
 
     # Load data
-    task_dir = './data/' + _config.task.dir
+    task_dir = '.\\data\\' + _config.task.dir
     kb_index = index_entity_relation(
         os.path.join(task_dir, 'train.txt'),
         os.path.join(task_dir, 'valid.txt'),
@@ -79,8 +79,8 @@ def main(argv=None, mode: str=None,
 
     # For WN18RR, we need to read data with labels for triple classification
     if _config.task.dir == 'wn18rr':
-        valid_data_with_label   = read_data(os.path.join('data/evaluation on TP/wn18rr', 'valid.txt'), kb_index, with_label=True)
-        test_data_with_label    = read_data(os.path.join('data/evaluation on TP/wn18rr', 'test.txt'), kb_index, with_label=True)
+        valid_data_with_label   = read_data(os.path.join('.\\data\\evaluation on TP\\wn18rr', 'valid.txt'), kb_index, with_label=True)
+        test_data_with_label    = read_data(os.path.join('.\\data\\evaluation on TP\\wn18rr', 'test.txt'), kb_index, with_label=True)
 
     # Convert to tensors
     train_data  = [torch.LongTensor(vec) for vec in train_data]

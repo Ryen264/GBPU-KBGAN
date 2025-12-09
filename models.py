@@ -7,7 +7,8 @@ import logging
 import os
 import numpy as np
 
-from config import config, device
+from config import config
+import config as _config_module
 from datasets import batch_by_num
 from base_model import BaseModel, BaseModule
 
@@ -46,12 +47,14 @@ class TransE(BaseModel):
     def __init__(self, n_entity, n_relation, config):
         super().__init__()
         self.model = TransEModule(n_entity, n_relation, config)
-        self.model.to(device)
+        self.model.to(self.device)
         self.config = config
         self.path = None
 
     def train(self, train_data, corrupter, tester,
-              use_early_stopping=False, patience=10, optimizer_name='Adam') -> Tuple[float, str]:
+              use_early_stopping=False, patience=10, optimizer_name='Adam', use_gpu: bool = None) -> Tuple[float, str]:
+        if use_gpu is not None:
+            self._set_device(use_gpu)
         head, relation, tail = train_data
         n_train = len(head)
         n_epoch = self.config.n_epoch
@@ -70,11 +73,11 @@ class TransE(BaseModel):
             tail = tail[rand_idx]
 
             head_corrupted, tail_corrupted = corrupter.corrupt(head, relation, tail)
-            head_cuda = head.to(device)
-            relation_cuda = relation.to(device)
-            tail_cuda = tail.to(device)
-            head_corrupted = head_corrupted.to(device)
-            tail_corrupted = tail_corrupted.to(device)
+            head_cuda = head.to(self.device)
+            relation_cuda = relation.to(self.device)
+            tail_cuda = tail.to(self.device)
+            head_corrupted = head_corrupted.to(self.device)
+            tail_corrupted = tail_corrupted.to(self.device)
             epoch_loss = 0
             for h0, r, t0, h1, t1 in batch_by_num(n_batch, head_cuda, relation_cuda, tail_cuda, head_corrupted, tail_corrupted, n_sample=n_train):
                 self.zero_grad()
@@ -85,19 +88,21 @@ class TransE(BaseModel):
                 epoch_loss += loss.item()
 
             logging.info('Epoch %d/%d, Loss=%f', epoch + 1, n_epoch, epoch_loss / n_train)
-            task_dir = './output/' + config().task.dir + '/models'
+            task_dir = '.\\output\\' + config().task.dir + '\\models'
             os.makedirs(task_dir, exist_ok=True)
             model_path = os.path.join(task_dir, self.config.model_file)
-            if (epoch + 1) % self.config.epoch_per_test == 0:
-                test_perf = tester()['MRR']
-                if test_perf > best_perf:
+            if (((n_epoch >= self.config.epoch_per_test) and ((epoch + 1) % self.config.epoch_per_test == 0))
+                or (epoch == n_epoch - 1)):
+                metrics = tester()
+                test_perf = metrics['MRR']
+                if (test_perf > best_perf):
                     self.save_model(model_path)
                     best_perf = test_perf
                     patience_counter = 0
                 else:
                     patience_counter += 1
 
-                if use_early_stopping and patience_counter >= patience:
+                if (use_early_stopping and patience_counter >= patience):
                     logging.info('Early stopping triggered at epoch %d (patience=%d)', epoch + 1, patience)
                     break
         self.path = model_path
@@ -144,7 +149,7 @@ class TransD(BaseModel):
     def __init__(self, n_entity, n_relation, config):
         super().__init__()
         self.model = TransDModule(n_entity, n_relation, config)
-        self.model.to(device)
+        self.model.to(self.device)
         self.config = config
         self.path = None
 
@@ -159,10 +164,12 @@ class TransD(BaseModel):
         a_mat = np.loadtxt(os.path.join(vecpath, 'A.vec'))
         self.model.proj_relation_embed.weight.data.copy_(torch.from_numpy(a_mat[:n_relation, :]))
         self.model.proj_entity_embed.weight.data.copy_(torch.from_numpy(a_mat[n_relation:, :]))
-        self.model.to(device)
+        self.model.to(self.device)
 
     def train(self, train_data, corrupter, tester,
-              use_early_stopping=False, patience=10, optimizer_name='Adam') -> Tuple[float, str]:
+              use_early_stopping=False, patience=10, optimizer_name='Adam', use_gpu: bool = None) -> Tuple[float, str]:
+        if use_gpu is not None:
+            self._set_device(use_gpu)
         head, relation, tail = train_data
         n_train = len(head)
         n_epoch = self.config.n_epoch
@@ -181,11 +188,11 @@ class TransD(BaseModel):
             tail = tail[rand_idx]
 
             head_corrupted, tail_corrupted = corrupter.corrupt(head, relation, tail)
-            head_cuda = head.to(device)
-            relation_cuda = relation.to(device)
-            tail_cuda = tail.to(device)
-            head_corrupted = head_corrupted.to(device)
-            tail_corrupted = tail_corrupted.to(device)
+            head_cuda = head.to(self.device)
+            relation_cuda = relation.to(self.device)
+            tail_cuda = tail.to(self.device)
+            head_corrupted = head_corrupted.to(self.device)
+            tail_corrupted = tail_corrupted.to(self.device)
             epoch_loss = 0
             for h0, r, t0, h1, t1 in batch_by_num(n_batch, head_cuda, relation_cuda, tail_cuda, head_corrupted, tail_corrupted, n_sample=n_train):
                 self.zero_grad()
@@ -197,11 +204,13 @@ class TransD(BaseModel):
                 epoch_loss += loss.item()
 
             logging.info('Epoch %d/%d, Loss=%f', epoch + 1, n_epoch, epoch_loss / n_train)
-            task_dir = './output/' + config().task.dir + '/models'
+            task_dir = '.\\output\\' + config().task.dir + '\\models'
             os.makedirs(task_dir, exist_ok=True)
             model_path = os.path.join(task_dir, self.config.model_file)
-            if ((epoch + 1) % self.config.epoch_per_test == 0):
-                test_perf = tester()['MRR']
+            if (((n_epoch >= self.config.epoch_per_test) and ((epoch + 1) % self.config.epoch_per_test == 0))
+                or (epoch == n_epoch - 1)):
+                metrics = tester()
+                test_perf = metrics['MRR']
                 if (test_perf > best_perf):
                     self.save_model(model_path)
                     best_perf = test_perf
@@ -209,7 +218,7 @@ class TransD(BaseModel):
                 else:
                     patience_counter += 1
                     
-                if use_early_stopping and patience_counter >= patience:
+                if (use_early_stopping and patience_counter >= patience):
                     logging.info('Early stopping triggered at epoch %d', epoch + 1)
                     break
         self.path = model_path
@@ -240,13 +249,15 @@ class DistMult(BaseModel):
     def __init__(self, n_entity, n_relation, config):
         super().__init__()
         self.model = DistMultModule(n_entity, n_relation, config)
-        self.model.to(device)
+        self.model.to(self.device)
         self.config = config
         self.path = None
         self.weight_decay = config.lam / config.n_batch
 
     def train(self, train_data, corrupter, tester,
-              use_early_stopping=False, patience=10, optimizer_name='Adam') -> Tuple[float, str]:
+              use_early_stopping=False, patience=10, optimizer_name='Adam', use_gpu: bool = None) -> Tuple[float, str]:
+        if use_gpu is not None:
+            self._set_device(use_gpu)
         head, relation, tail = train_data
         n_train = len(head)
         n_epoch = self.config.n_epoch
@@ -267,24 +278,26 @@ class DistMult(BaseModel):
                 tail = tail[rand_idx]
 
                 head_corrupted, relation_corrupted, tail_corrupted = corrupter.corrupt(head, relation, tail)
-                head_corrupted = head_corrupted.to(device)
-                relation_corrupted = relation_corrupted.to(device)
-                tail_corrupted = tail_corrupted.to(device)
+                head_corrupted = head_corrupted.to(self.device)
+                relation_corrupted = relation_corrupted.to(self.device)
+                tail_corrupted = tail_corrupted.to(self.device)
 
             for hs, rs, ts in batch_by_num(n_batch, head_corrupted, relation_corrupted, tail_corrupted, n_sample=n_train):
                 self.zero_grad()
-                label = torch.zeros(len(hs)).type(torch.LongTensor).to(device)
+                label = torch.zeros(len(hs)).type(torch.LongTensor).to(self.device)
                 loss = torch.sum(self.model.softmax_loss(Variable(hs), Variable(rs), Variable(ts), label))
                 loss.backward()
 
                 optimizer.step()
                 epoch_loss += loss.item()
-            task_dir = './output/' + config().task.dir + '/models'
+            task_dir = '.\\output\\' + config().task.dir + '\\models'
             os.makedirs(task_dir, exist_ok=True)
             logging.info('Epoch %d/%d, Loss=%f', epoch + 1, n_epoch, epoch_loss / n_train)
             model_path = os.path.join(task_dir, self.config.model_file)
-            if ((epoch + 1) % self.config.epoch_per_test == 0):
-                test_perf = tester()['MRR']
+            if (((n_epoch >= self.config.epoch_per_test) and ((epoch + 1) % self.config.epoch_per_test == 0))
+                or (epoch == n_epoch - 1)):
+                metrics = tester()
+                test_perf = metrics['MRR']
                 if (test_perf > best_perf):
                     self.save_model(model_path)
                     best_perf = test_perf
@@ -292,7 +305,7 @@ class DistMult(BaseModel):
                 else:
                     patience_counter += 1
                     
-                if use_early_stopping and patience_counter >= patience:
+                if (use_early_stopping and patience_counter >= patience):
                     logging.info('Early stopping triggered at epoch %d', epoch + 1)
                     break
         self.path = model_path
@@ -331,13 +344,15 @@ class ComplEx(BaseModel):
     def __init__(self, n_entity, n_relation, config):
         super().__init__()
         self.model = ComplExModule(n_entity, n_relation, config)
-        self.model.to(device)
+        self.model.to(self.device)
         self.config = config
         self.path = None
         self.weight_decay = config.lam / config.n_batch
 
     def train(self, train_data, corrupter, tester,
-              use_early_stopping=False, patience=10, optimizer_name='Adam') -> Tuple[float, str]:
+              use_early_stopping=False, patience=10, optimizer_name='Adam', use_gpu: bool = None) -> Tuple[float, str]:
+        if use_gpu is not None:
+            self._set_device(use_gpu)
         head, relation, tail = train_data
         n_train = len(head)
         n_epoch = self.config.n_epoch
@@ -358,13 +373,13 @@ class ComplEx(BaseModel):
                 tail = tail[rand_idx]
 
                 head_corrupted, relation_corrupted, tail_corrupted = corrupter.corrupt(head, relation, tail)
-                head_corrupted = head_corrupted.to(device)
-                relation_corrupted = relation_corrupted.to(device)
-                tail_corrupted = tail_corrupted.to(device)
+                head_corrupted = head_corrupted.to(self.device)
+                relation_corrupted = relation_corrupted.to(self.device)
+                tail_corrupted = tail_corrupted.to(self.device)
 
             for hs, rs, ts in batch_by_num(n_batch, head_corrupted, relation_corrupted, tail_corrupted, n_sample=n_train):
                 self.zero_grad()
-                label = torch.zeros(len(hs)).type(torch.LongTensor).to(device)
+                label = torch.zeros(len(hs)).type(torch.LongTensor).to(self.device)
 
                 loss = torch.sum(self.model.softmax_loss(Variable(hs), Variable(rs), Variable(ts), label))
                 loss.backward()
@@ -373,11 +388,13 @@ class ComplEx(BaseModel):
                 epoch_loss += loss.item()
 
             logging.info('Epoch %d/%d, Loss=%f', epoch + 1, n_epoch, epoch_loss / n_train)
-            task_dir = './output/' + config().task.dir + '/models'
+            task_dir = '.\\output\\' + config().task.dir + '\\models'
             os.makedirs(task_dir, exist_ok=True)
             model_path = os.path.join(task_dir, self.config.model_file)
-            if ((epoch + 1) % self.config.epoch_per_test == 0):
-                test_perf = tester()['MRR']
+            if (((n_epoch >= self.config.epoch_per_test) and ((epoch + 1) % self.config.epoch_per_test == 0))
+                or (epoch == n_epoch - 1)):
+                metrics = tester()
+                test_perf = metrics['MRR']
                 if (test_perf > best_perf):
                     self.save_model(model_path)
                     best_perf = test_perf
@@ -385,7 +402,7 @@ class ComplEx(BaseModel):
                 else:
                     patience_counter += 1
                     
-                if use_early_stopping and patience_counter >= patience:
+                if (use_early_stopping and patience_counter >= patience):
                     logging.info('Early stopping triggered at epoch %d', epoch + 1)
                     break
         self.path = model_path
