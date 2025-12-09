@@ -49,6 +49,6 @@ ComplEx:
   model_file: complex.mdl
 log:
   dump_config: false
-  to_file: false
+  to_file: true
   dir: ./log
   prefix: ""

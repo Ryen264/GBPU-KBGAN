@@ -6,8 +6,8 @@ from typing import Tuple
 import logging
 import os
 import numpy as np
+import config
 
-from config import config
 from datasets import batch_by_num
 from base_model import BaseModel, BaseModule
 
@@ -65,7 +65,7 @@ class TransE(BaseModel):
         best_perf = 0.0
         patience_counter = 0
 
-        task_dir = '.\\models\\' + self.config.dataset + '\\' + self.config.task + '\\components'
+        task_dir = '.\\models\\' + config._config.dataset + '\\' + config._config.task + '\\components'
         os.makedirs(task_dir, exist_ok=True)
         model_path = os.path.join(task_dir, self.config.model_file)
         for epoch in range(n_epoch):
@@ -181,7 +181,7 @@ class TransD(BaseModel):
         best_perf = 0.0
         patience_counter = 0
         
-        task_dir = '.\\models\\' + self.config().dataset + '\\' + self.config.task + '\\components'
+        task_dir = '.\\models\\' + config._config.dataset + '\\' + config._config.task + '\\components'
         os.makedirs(task_dir, exist_ok=True)
         model_path = os.path.join(task_dir, self.config.model_file)
         for epoch in range(n_epoch):
@@ -270,7 +270,7 @@ class DistMult(BaseModel):
         best_perf = 0.0
         patience_counter = 0
         
-        task_dir = '.\\models\\' + self.config.dataset + '\\' + self.config.task + '\\components'
+        task_dir = '.\\models\\' + config._config.dataset + '\\' + config._config.task + '\\components'
         os.makedirs(task_dir, exist_ok=True)
         model_path = os.path.join(task_dir, self.config.model_file)
         for epoch in range(n_epoch):
@@ -366,7 +366,7 @@ class ComplEx(BaseModel):
         best_perf = 0.0
         patience_counter = 0
         
-        task_dir = '.\\models\\' + self.config.dataset + '\\' + self.config.task + '\\components'
+        task_dir = '.\\models\\' + config._config.dataset + '\\' + config._config.task + '\\components'
         os.makedirs(task_dir, exist_ok=True)
         model_path = os.path.join(task_dir, self.config.model_file)
         for epoch in range(n_epoch):

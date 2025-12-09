@@ -158,9 +158,19 @@ class BaseModel(object):
                             tail_scores += tails[key_tail].to(self.device) * 1e30
                             tail_scores[tail_id] = tmp
 
-                    head_mr, head_mrr, head_hits, head_target_score = ranking_metrics(scores=head_scores, target=head_id, k_list=k_list)
-                    tail_mr, tail_mrr, tail_hits, tail_target_score = ranking_metrics(scores=tail_scores, target=tail_id, k_list=k_list)                    
-                    
+                    head_metrics = ranking_metrics(scores=head_scores, target=head_id, k_list=k_list)
+                    tail_metrics = ranking_metrics(scores=tail_scores, target=tail_id, k_list=k_list)
+
+                    head_mr = head_metrics['mr']
+                    head_mrr = head_metrics['mrr']
+                    head_hits = head_metrics['hits']
+                    head_target_score = head_metrics.get('target_score')
+
+                    tail_mr = tail_metrics['mr']
+                    tail_mrr = tail_metrics['mrr']
+                    tail_hits = tail_metrics['hits']
+                    tail_target_score = tail_metrics.get('target_score')
+
                     mr_total += (head_mr + tail_mr)
                     mrr_total += (head_mrr + tail_mrr)
                     hits_total = [(hits_total[i] + head_hits[i] + tail_hits[i]) for i in range(len(k_list))]

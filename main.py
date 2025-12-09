@@ -79,9 +79,9 @@ def main():
 
     elif mode == 'gan-train':
         # Load 2 pretrained components
-        dis_model_path = './output/' + _config.task.dir + '/models/' + _config['d_config'] + '.mdl'
+        dis_model_path = '.\\models\\' + _config.dataset + '\\' + _config.task + '\\components\\' + _config['d_config'] + '.mdl'
         model.load_component(component_role="discriminator", component_path=dis_model_path)
-        gen_model_path = './output/' + _config.task.dir + '/models/' + _config['g_config'] + '.mdl'
+        gen_model_path = '.\\models\\' + _config.dataset + '\\' + _config.task + '\\components\\' + _config['g_config'] + '.mdl'
         model.load_component(component_role="generator", component_path=gen_model_path)
 
         # Train KBGAN
