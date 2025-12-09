@@ -120,7 +120,8 @@ class BaseModel(object):
         
     def load_model(self, model_filename) -> None:
         # Ensure model is loaded onto the chosen device
-        state_dict = torch.load(model_filename, map_location=lambda storage, location: storage.to(self.device), weights_only=True)
+        # self.mdl.load_state_dict(torch.load(filename, map_location=lambda storage, location: storage.cuda()))
+        state_dict = torch.load(model_filename, map_location=self.device, weights_only=True)
         self.model.load_state_dict(state_dict)
 
     def _ensure_optimizer(self) -> None:

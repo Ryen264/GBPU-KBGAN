@@ -1,63 +1,23 @@
 import torch
 import os
 import argparse
-
+import sys
 from config import config, overwrite_config_with_args, logger_init
 from data_loader import index_entity_relation, graph_size, read_data
 from datasets import sparse_heads_tails, inplace_shuffle
 from kbgan import KBGAN
 
-def parse_args():
-    p = argparse.ArgumentParser(description='Run KBGAN pipeline')
-    p.add_argument('--mode', choices=['full', 'pretrain', 'train', 'evaluate_on_link_prediction', 'evaluate_on_triple_classification'], default='full',
-                   help='Pipeline mode to run')
-    p.add_argument('--config-file',
-                   help='Path to YAML config file (overrides default)')
-    p.add_argument('--override', action='append', default=[],
-                   help='Config overrides like --override TransE.n_epoch=500 (can be repeated)')
-    p.add_argument('--early-stopping-pretrain', action='store_true',
-                   help='Enable early stopping for pretrain')
-    p.add_argument('--early-stopping-train', action='store_true',
-                   help='Enable early stopping for train')
-    p.add_argument('--patience', type=int, default=10,
-                   help='Number of validation checks to wait for improvement before stopping (default: 10)')
-    p.add_argument('--optimizer-name', choices=['Adam', 'SGD', 'AdamW', 'RMSprop', 'Adagrad'], default='Adam',
-                   help='Optimizer used for pretrain')
-    return p.parse_args()
+def main():
+    _config = config()
+    mode = sys.argv[1].split('=')[1] if len(sys.argv) > 1 else None
+    args = sys.argv[2:]
+    if args:
+        overwrite_config_with_args(args)
+        print("Running config:", _config)
 
-def main(argv=None, mode: str=None,
-         early_stopping_pretrain: bool=None, early_stopping_train: bool=None, patience: int=None, optimizer_name: str=None):
-    args = parse_args() if argv is None else parse_args()
-
-    # Load configuration (default or provided file)
-    if args.config_file:
-        _config = config(args.config_file)
-        print(f"Loaded config from {args.config_file}")
-    else:
-        _config = config()
-
-    # Apply default hyperparameter overrides first
-    default_overrides = [
-        "--TransE.n_epoch=2",
-        "--TransE.epoch_per_test=5",
-        "--DistMult.n_epoch=2",
-        "--DistMult.epoch_per_test=5",
-        "--KBGAN.n_epoch=2",
-        "--KBGAN.epoch_per_test=5"
-    ]
-    overwrite_config_with_args(default_overrides)
-
-    # Apply user overrides (after defaults so they take precedence)
-    user_overrides = []
-    for o in args.override:
-        if o.startswith('--'):
-            user_overrides.append(o)
-        else:
-            user_overrides.append('--' + o)
-    if user_overrides:
-        overwrite_config_with_args(user_overrides)
-
-    _config.log.to_file = True
+    _config['KBGAN']['n_epoch'] = 2
+    _config[_config.d_config]['n_epoch'] = 2
+    _config[_config.g_config]['n_epoch'] = 2
 
     # Init logging now that config is prepared
     logger_init()
@@ -87,36 +47,27 @@ def main(argv=None, mode: str=None,
     valid_data  = [torch.LongTensor(vec) for vec in valid_data]
     test_data   = [torch.LongTensor(vec) for vec in test_data]
 
+    print(f"Running mode: {mode}")
     model = KBGAN(discriminator_type="TransE", generator_type="DistMult")
     model.fit(n_entity, n_relation)
-
-    print(f"Running mode: {args.mode}")
-    if mode is not None and mode in ('full', 'pretrain', 'train', 'evaluate_on_link_prediction', 'evaluate_on_triple_classification'):
-        args.mode = mode
-    if early_stopping_pretrain is not None:
-        args.early_stopping_pretrain = early_stopping_pretrain
-    if early_stopping_train is not None:
-        args.early_stopping_train = early_stopping_train
-    if patience is not None:
-        args.patience = patience
-    if optimizer_name is not None:
-        args.optimizer_name = optimizer_name
-
-    if args.mode == 'full':
-        # Pretrain 2 components
+    if mode == 'full-train':
+        # Train 2 components
         dis_best_perf, dis_model_path, gen_best_perf, gen_model_path = model.pretrain(heads, tails, train_data, valid_data_with_label,
-                                                                                        use_early_stopping=args.early_stopping_pretrain, patience=args.patience, optimizer_name=args.optimizer_name)
-        
-        # Test 2 pretrained components
+                                                                                        use_early_stopping=_config['KBGAN']['early_stopping_pretrain'], patience=_config['KBGAN']['patience'], optimizer_name=_config['KBGAN']['optimizer_name'])
+        # Test 2 components just be trained on link prediction
         dis_metrics = model.evaluate_component("discriminator", heads, tails, test_data)
-        print(f"Discriminator metrics:\n{dis_metrics}")
+        print(f"Discriminator metrics on Link Prediction:\n{dis_metrics}")
 
         gen_metrics = model.evaluate_component("generator", heads, tails, test_data)
-        print(f"Generator metrics:\n{gen_metrics}")
+        print(f"Generator metrics on Link Prediction:\n{gen_metrics}")
 #
         # Train KBGAN
         best_perf, model_path = model.train(heads, tails, train_data, valid_data,
-                                            use_early_stopping=args.early_stopping_train, patience=args.patience, optimizer_name=args.optimizer_name)
+                                            use_early_stopping=_config['KBGAN']['early_stopping_train'], patience=_config['KBGAN']['patience'], optimizer_name=_config['KBGAN']['optimizer_name'])
+        
+        print(f"KBGAN model saved to: {model_path}")
+        print(f"Best validation performance on link prediction while training: {best_perf}")
+
         
         # Test KBGAN on link prediction
         link_prediction_metrics = model.evaluate_on_link_prediction(heads, tails, test_data)
@@ -126,41 +77,41 @@ def main(argv=None, mode: str=None,
         triple_classification_metrics, threshold, predictions, scores_list = model.evaluate_on_triple_classification(test_data_with_label, valid_data_with_label, threshold=None, auto_threshold=True)
         print(f"Triple classification metrics:\n{triple_classification_metrics}")
 
-    elif args.mode =='pretrain':
-        dis_best_perf, dis_model_path, gen_best_perf, gen_model_path = model.pretrain(heads, tails, train_data, valid_data_with_label,
-                                                                                        use_early_stopping=args.early_stopping_pretrain, patience=args.patience, optimizer_name=args.optimizer_name)
-        
-        # Test 2 pretrained components
-        dis_metrics = model.evaluate_component("discriminator", heads, tails, test_data)
-        print(f"Discriminator metrics:\n{dis_metrics}")
-
-        gen_metrics = model.evaluate_component("generator", heads, tails, test_data)
-        print(f"Generator metrics:\n{gen_metrics}")
-
-    elif args.mode == 'train':
+    elif mode == 'gan-train':
         # Load 2 pretrained components
+        dis_model_path = './output/' + _config.task.dir + '/models/' + _config['d_config'] + '.mdl'
         model.load_component(component_role="discriminator", component_path=dis_model_path)
+        gen_model_path = './output/' + _config.task.dir + '/models/' + _config['g_config'] + '.mdl'
         model.load_component(component_role="generator", component_path=gen_model_path)
 
         # Train KBGAN
         best_perf, model_path = model.train(heads, tails, train_data, valid_data,
-                                            use_early_stopping=args.early_stopping_train, patience=args.patience, optimizer_name=args.optimizer_name)
+                                             use_early_stopping=_config['KBGAN']['early_stopping_train'], patience=_config['KBGAN']['patience'], optimizer_name=_config['KBGAN']['optimizer_name'])
+        print(f"KBGAN model saved to: {model_path}")
+        print(f"Best validation performance on link prediction while training: {best_perf}")
+
+        # Test KBGAN on Link Prediction
+        link_prediction_metrics = model.evaluate_on_link_prediction(heads, tails, test_data)
+        print(f"Link prediction metrics:\n{link_prediction_metrics}")
+
+        # Test KBGAN on Triple Classification
+        triple_classification_metrics, threshold, predictions, scores_list = model.evaluate_on_triple_classification(test_data_with_label, valid_data_with_label, threshold=None, auto_threshold=True)
+        print(f"Triple classification metrics:\n{triple_classification_metrics}")   
         
-    elif args.mode == 'evaluate_on_link_prediction':
+    elif mode == 'test-only':
         # Load pretrained KBGAN
-        model.load()
+        model.load("./output/" + _config.task.dir + "/models/" + _config['d_config'] + ".mdl")
 
         # Test KBGAN on link prediction
         link_prediction_metrics = model.evaluate_on_link_prediction(heads, tails, test_data)
         print(f"Link prediction metrics:\n{link_prediction_metrics}")
 
-    elif args.mode == 'evaluate_on_triple_classification':
-        # Load pretrained KBGAN
-        model.load()
-
-        # Test KBGAN on triple classification
+        # Test KBGAN on Triple Classification
         triple_classification_metrics, threshold, predictions, scores_list = model.evaluate_on_triple_classification(test_data_with_label, valid_data_with_label, threshold=None, auto_threshold=True)
-        print(f"Triple classification metrics:\n{triple_classification_metrics}")
+        print(f"Triple classification metrics:\n{triple_classification_metrics}") 
+    else: 
+        print("Invalid mode. Please try again and specify a mode: full-train / gan-train / test-only") 
+
 
 if __name__ == '__main__':
-    main(mode='full', early_stopping_pretrain=True, early_stopping_train=True, patience=100, optimizer_name='Adagrad')
+    main()

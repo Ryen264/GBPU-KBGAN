@@ -1,4 +1,3 @@
-pretrain_config: TransE
 g_config: DistMult
 d_config: TransE
 test_batch_size: 100
