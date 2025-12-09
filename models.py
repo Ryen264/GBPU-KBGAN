@@ -6,9 +6,8 @@ from typing import Tuple
 import logging
 import os
 import numpy as np
+import config
 
-from config import config
-import config as _config_module
 from datasets import batch_by_num
 from base_model import BaseModel, BaseModule
 
@@ -66,6 +65,9 @@ class TransE(BaseModel):
         best_perf = 0.0
         patience_counter = 0
 
+        task_dir = '.\\models\\' + config._config.dataset + '\\' + config._config.task + '\\components'
+        os.makedirs(task_dir, exist_ok=True)
+        model_path = os.path.join(task_dir, self.config.model_file)
         for epoch in range(n_epoch):
             rand_idx = torch.randperm(n_train)
             head = head[rand_idx]
@@ -79,7 +81,8 @@ class TransE(BaseModel):
             head_corrupted = head_corrupted.to(self.device)
             tail_corrupted = tail_corrupted.to(self.device)
             epoch_loss = 0
-            for h0, r, t0, h1, t1 in batch_by_num(n_batch, head_cuda, relation_cuda, tail_cuda, head_corrupted, tail_corrupted, n_sample=n_train):
+            for h0, r, t0, h1, t1 in batch_by_num(n_batch, head_cuda, relation_cuda, tail_cuda,
+                                                  head_corrupted, tail_corrupted, n_sample=n_train):
                 self.zero_grad()
                 loss = torch.sum(self.model.pair_loss(Variable(h0), Variable(r), Variable(t0), Variable(h1), Variable(t1)))
                 loss.backward()
@@ -88,15 +91,12 @@ class TransE(BaseModel):
                 epoch_loss += loss.item()
 
             logging.info('Epoch %d/%d, Loss=%f', epoch + 1, n_epoch, epoch_loss / n_train)
-            task_dir = '.\\output\\' + config().task.dir + '\\models'
-            os.makedirs(task_dir, exist_ok=True)
-            model_path = os.path.join(task_dir, self.config.model_file)
             if (((n_epoch >= self.config.epoch_per_test) and ((epoch + 1) % self.config.epoch_per_test == 0))
                 or (epoch == n_epoch - 1)):
                 metrics = tester()
                 test_perf = metrics['MRR']
                 if (test_perf > best_perf):
-                    self.save_model(model_path)
+                    self.save(model_path)
                     best_perf = test_perf
                     patience_counter = 0
                 else:
@@ -181,6 +181,9 @@ class TransD(BaseModel):
         best_perf = 0.0
         patience_counter = 0
         
+        task_dir = '.\\models\\' + config._config.dataset + '\\' + config._config.task + '\\components'
+        os.makedirs(task_dir, exist_ok=True)
+        model_path = os.path.join(task_dir, self.config.model_file)
         for epoch in range(n_epoch):
             rand_idx = torch.randperm(n_train)
             head = head[rand_idx]
@@ -194,7 +197,8 @@ class TransD(BaseModel):
             head_corrupted = head_corrupted.to(self.device)
             tail_corrupted = tail_corrupted.to(self.device)
             epoch_loss = 0
-            for h0, r, t0, h1, t1 in batch_by_num(n_batch, head_cuda, relation_cuda, tail_cuda, head_corrupted, tail_corrupted, n_sample=n_train):
+            for h0, r, t0, h1, t1 in batch_by_num(n_batch, head_cuda, relation_cuda, tail_cuda,
+                                                  head_corrupted, tail_corrupted, n_sample=n_train):
                 self.zero_grad()
                 loss = torch.sum(self.model.pair_loss(Variable(h0), Variable(r), Variable(t0), Variable(h1), Variable(t1)))
                 loss.backward()
@@ -204,15 +208,12 @@ class TransD(BaseModel):
                 epoch_loss += loss.item()
 
             logging.info('Epoch %d/%d, Loss=%f', epoch + 1, n_epoch, epoch_loss / n_train)
-            task_dir = '.\\output\\' + config().task.dir + '\\models'
-            os.makedirs(task_dir, exist_ok=True)
-            model_path = os.path.join(task_dir, self.config.model_file)
             if (((n_epoch >= self.config.epoch_per_test) and ((epoch + 1) % self.config.epoch_per_test == 0))
                 or (epoch == n_epoch - 1)):
                 metrics = tester()
                 test_perf = metrics['MRR']
                 if (test_perf > best_perf):
-                    self.save_model(model_path)
+                    self.save(model_path)
                     best_perf = test_perf
                     patience_counter = 0
                 else:
@@ -269,6 +270,9 @@ class DistMult(BaseModel):
         best_perf = 0.0
         patience_counter = 0
         
+        task_dir = '.\\models\\' + config._config.dataset + '\\' + config._config.task + '\\components'
+        os.makedirs(task_dir, exist_ok=True)
+        model_path = os.path.join(task_dir, self.config.model_file)
         for epoch in range(n_epoch):
             epoch_loss = 0
             if (epoch % self.config.sample_freq == 0):
@@ -290,16 +294,14 @@ class DistMult(BaseModel):
 
                 optimizer.step()
                 epoch_loss += loss.item()
-            task_dir = '.\\output\\' + config().task.dir + '\\models'
-            os.makedirs(task_dir, exist_ok=True)
+
             logging.info('Epoch %d/%d, Loss=%f', epoch + 1, n_epoch, epoch_loss / n_train)
-            model_path = os.path.join(task_dir, self.config.model_file)
             if (((n_epoch >= self.config.epoch_per_test) and ((epoch + 1) % self.config.epoch_per_test == 0))
                 or (epoch == n_epoch - 1)):
                 metrics = tester()
                 test_perf = metrics['MRR']
                 if (test_perf > best_perf):
-                    self.save_model(model_path)
+                    self.save(model_path)
                     best_perf = test_perf
                     patience_counter = 0
                 else:
@@ -364,6 +366,9 @@ class ComplEx(BaseModel):
         best_perf = 0.0
         patience_counter = 0
         
+        task_dir = '.\\models\\' + config._config.dataset + '\\' + config._config.task + '\\components'
+        os.makedirs(task_dir, exist_ok=True)
+        model_path = os.path.join(task_dir, self.config.model_file)
         for epoch in range(n_epoch):
             epoch_loss = 0
             if (epoch % self.config.sample_freq == 0):
@@ -388,15 +393,12 @@ class ComplEx(BaseModel):
                 epoch_loss += loss.item()
 
             logging.info('Epoch %d/%d, Loss=%f', epoch + 1, n_epoch, epoch_loss / n_train)
-            task_dir = '.\\output\\' + config().task.dir + '\\models'
-            os.makedirs(task_dir, exist_ok=True)
-            model_path = os.path.join(task_dir, self.config.model_file)
             if (((n_epoch >= self.config.epoch_per_test) and ((epoch + 1) % self.config.epoch_per_test == 0))
                 or (epoch == n_epoch - 1)):
                 metrics = tester()
                 test_perf = metrics['MRR']
                 if (test_perf > best_perf):
-                    self.save_model(model_path)
+                    self.save(model_path)
                     best_perf = test_perf
                     patience_counter = 0
                 else:

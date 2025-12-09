@@ -10,7 +10,7 @@ _config = None
 class ConfigDict(dict):
     __getattr__ = dict.__getitem__
 
-def config(config_path='.\config\config_wn18rr.yaml'):
+def config(config_path='.\\config\\config_wn18rr.yaml'):
     """
     default: config("config_wn18rr.yaml")
     """
@@ -31,6 +31,11 @@ def config(config_path='.\config\config_wn18rr.yaml'):
 def overwrite_config_with_args(args=[], sep='.'):
     """
     Manually pass parameters. E.g. overwrite_config_with_args(["--pretrain_config=TransD"])
+    TransE.n_epoch=2
+    steps=["TransE", "n_epoch"]
+    steps[:-1] = ["TransE"]
+    steps[-1] = "n_epoch"
+    val=2
     """
     def path_set(path, val, sep='.', auto_convert=False):
         steps = path.split(sep)
@@ -139,7 +144,7 @@ def logger_init():
     root_logger.addHandler(console_handler)
 
     if (config().log.to_file):
-        log_dir = './output/' + config().task.dir + '/logs'
+        log_dir = '.\\logs\\' + config().dataset + '\\' + config().task
         os.makedirs(log_dir, exist_ok=True)
         log_filename = os.path.join(
             log_dir,

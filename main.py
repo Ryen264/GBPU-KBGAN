@@ -23,7 +23,7 @@ def main():
     logger_init()
 
     # Load data
-    task_dir = '.\\data\\' + _config.task.dir
+    task_dir = '.\\data\\' + _config.dataset
     kb_index = index_entity_relation(
         os.path.join(task_dir, 'train.txt'),
         os.path.join(task_dir, 'valid.txt'),
@@ -37,10 +37,10 @@ def main():
     test_data = read_data(os.path.join(task_dir, 'test.txt'), kb_index)
     heads, tails = sparse_heads_tails(n_entity, train_data, valid_data, test_data)
 
-    # For WN18RR, we need to read data with labels for triple classification
-    if _config.task.dir == 'wn18rr':
-        valid_data_with_label   = read_data(os.path.join('.\\data\\evaluation on TP\\wn18rr', 'valid.txt'), kb_index, with_label=True)
-        test_data_with_label    = read_data(os.path.join('.\\data\\evaluation on TP\\wn18rr', 'test.txt'), kb_index, with_label=True)
+    # For task triple-classification, we need to read data with labels
+    if _config.task == 'triple-classification' or _config.task == 'all':
+        valid_data_with_label   = read_data(os.path.join('.\\data\\' + _config.dataset + '_w_labels', 'valid.txt'), kb_index, with_label=True)
+        test_data_with_label    = read_data(os.path.join('.\\data\\' + _config.dataset + '_w_labels', 'test.txt'), kb_index, with_label=True)
 
     # Convert to tensors
     train_data  = [torch.LongTensor(vec) for vec in train_data]
@@ -79,9 +79,9 @@ def main():
 
     elif mode == 'gan-train':
         # Load 2 pretrained components
-        dis_model_path = './output/' + _config.task.dir + '/models/' + _config['d_config'] + '.mdl'
+        dis_model_path = '.\\models\\' + _config.dataset + '\\' + _config.task + '\\components\\' + _config['d_config'] + '.mdl'
         model.load_component(component_role="discriminator", component_path=dis_model_path)
-        gen_model_path = './output/' + _config.task.dir + '/models/' + _config['g_config'] + '.mdl'
+        gen_model_path = '.\\models\\' + _config.dataset + '\\' + _config.task + '\\components\\' + _config['g_config'] + '.mdl'
         model.load_component(component_role="generator", component_path=gen_model_path)
 
         # Train KBGAN
