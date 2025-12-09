@@ -69,7 +69,7 @@ class Component():
             print(f"Component must be fitted before being trained!")
             return None, None
         
-        overwrite_config_with_args(["--pretrain_config=" + self.model_type])
+        # overwrite_config_with_args(["--pretrain_config=" + self.model_type])
         overwrite_config_with_args(["--log.prefix=" + self.model_type + '_'])
         logger_init()
 
@@ -264,13 +264,13 @@ class KBGAN():
         
         if component_role == "discriminator":
             print(f"Loading discriminator: {self.discriminator_type} model.")
-            self.discriminator.load_model(component_path)
+            self.discriminator.load(component_path)
             print(f"Loaded discriminator successfully by path: {component_path}")
             self.discriminator_path = component_path
 
         elif component_role == "generator":
             print(f"Loading generator: {self.generator_type} model.")
-            self.generator.load_model(component_path)
+            self.generator.load(component_path)
             print(f"Loaded generator successfully by path: {component_path}")
             self.generator_path = component_path
 
