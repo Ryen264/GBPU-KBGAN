@@ -49,6 +49,7 @@ class Component():
     
         print(f"Loading component by path: {model_path}")
         self.model.load_model(model_path)
+        self.model_path = model_path
         print(f"Loaded component successfully: {self.model_type} model.")
     
     def save(self, model_path: str) -> None:
@@ -219,7 +220,7 @@ class Component():
                 else:
                     predictions.append(1 if score > threshold else 0)
             
-            metrics = triple_classification_metrics(predictions, labels, scores=scores_list)
+            metrics = classification_metrics(predictions, labels, scores=scores_list)
             f1 = metrics['f1']
             
             if f1 > best_f1:
@@ -305,6 +306,7 @@ class KBGAN():
         
         print(f"Loading KBGAN (discriminator) by path: {kbgan_path}")
         self.discriminator.load(kbgan_path)
+        self.kbgan_path = kbgan_path
         print(f"Loaded KBGAN (discriminator) successfully.")
 
     def save(self, kbgan_path: str) -> None:
