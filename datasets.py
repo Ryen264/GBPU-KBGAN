@@ -52,6 +52,7 @@ def inplace_shuffle(*lists) -> None:
 def batch_by_num(n_batch, *lists, n_sample=None):
     if n_sample is None:
         n_sample = len(lists[0])
+        
     for i in range(n_batch):
         head = int(n_sample * i / n_batch)
         tail = int(n_sample * (i + 1) / n_batch)
@@ -64,6 +65,7 @@ def batch_by_num(n_batch, *lists, n_sample=None):
 def batch_by_size(batch_size, *lists, n_sample=None):
     if n_sample is None:
         n_sample = len(lists[0])
+
     head = 0
     while head < n_sample:
         tail = min(n_sample, head + batch_size)

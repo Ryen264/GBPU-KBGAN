@@ -4,17 +4,15 @@ import torch
 import torch.nn.functional as nnf
 from torch.autograd import Variable
 from torch.optim import Adam, SGD, AdamW, RMSprop, Adagrad
-import numpy as np
 from typing import Generator, Tuple
-from config import device
 
-from config import config, overwrite_config_with_args, logger_init
 from datasets import batch_by_num, BernCorrupterMulti, BernCorrupter
 from models import TransE, TransD, DistMult, ComplEx
 from metrics import classification_metrics
+import config
 
 class Component():
-    def __init__(self, role: str, model_type: str):
+    def __init__(self, role: str, model_type: str, n_entity: int, n_relation: int):
         """
         role = ["discriminator", "generator"]
         model_type = ["TransE", "TransD", "DistMult", "ComplEx"]
@@ -23,26 +21,30 @@ class Component():
             print(f"Initialized a new component with role {role}.")
             self.role = role
         else:
-            print(f"Input role should be in list [\"discriminator\", \"generator\"]! Default role: \"discriminator\".")
-            self.role = "discriminator"
+            raise ValueError(f"Input role should be in list [\"discriminator\", \"generator\"]!")
         
         if model_type in ["TransE", "TransD", "DistMult", "ComplEx"]:
             print(f'Initialized component: {model_type} model.')
             self.model_type = model_type
         else:
-            print(f"Input model type should be in list [\"TransE\", \"TransD\", \"DistMult\", \"ComplEx\"]! Default model type: \"TransE\".")
-            self.model_type = "TransE"
-        
+            raise ValueError(f"Input model type should be in list [\"TransE\", \"TransD\", \"DistMult\", \"ComplEx\"]!")
 
-        self.model_config = config()[self.model_type]
-        self.model = None
-        self.model_path = None
-        self.n_entity = None
-        self.n_relation = None
-
-    def fit(self, n_entity: int, n_relation: int) -> None:
         self.n_entity = n_entity
         self.n_relation = n_relation
+        self.model_type = model_type
+        self.model_path = None
+
+        self.model_config = config._config[self.model_type]
+
+        use_gpu = (config.device.type == 'cuda')
+        if self.model_type == 'TransE':
+            self.model = TransE(self.n_entity, self.n_relation, use_gpu=use_gpu)
+        elif self.model_type == 'TransD':
+            self.model = TransD(self.n_entity, self.n_relation, use_gpu=use_gpu)
+        elif self.model_type == 'DistMult':
+            self.model = DistMult(self.n_entity, self.n_relation, use_gpu=use_gpu)
+        elif self.model_type == 'ComplEx':
+            self.model = ComplEx(self.n_entity, self.n_relation, use_gpu=use_gpu)    
 
     def load(self, model_path: str) -> None:
         if (self.n_entity is None or self.n_relation is None):
@@ -59,50 +61,51 @@ class Component():
             self.model = ComplEx(self.n_entity, self.n_relation, self.model_config)
         self.model.load(model_path)
         self.model_path = model_path
-        print(f"Loaded component successfully: {self.model_type} model.")
+        print(f"Loaded component successfully by: {self.model_path}")
+
+    def train(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data: tuple,
+              use_early_stopping: bool=False, patience: int=10, optimizer_name: str='Adam',
+              is_save_model: bool=True) -> Tuple[float, str | None]:    
+        config.overwrite_config_with_args(["--log.prefix=" + self.model_type + '_'])
+        config.logger_init()
+
+        if self.model_type in ['TransE', 'TransD']:
+            corrupter = BernCorrupter(train_data, self.n_entity, self.n_relation)
+        elif self.model_type in ['DistMult', 'ComplEx']:
+            self.n_sample = self.model_config.n_sample
+            corrupter = BernCorrupterMulti(train_data, self.n_entity, self.n_relation, self.n_sample)
+        else:
+            raise ValueError(f"Unsupported model type: {self.model_type}")
+
+        if config._config.task == 'triple-classification' or config._config.task == 'all':
+            tester = lambda: classification_metrics(*self.model.evaluate_triple_classification(valid_data, self.n_entity, heads, tails))
+        elif config._config.task == 'link-prediction' or config._config.task == 'all':
+            tester = lambda: self.model.evaluate(valid_data, self.n_entity, heads, tails)
+        else:
+            raise ValueError(f"Unsupported task: {config._config.task}")
+        use_gpu = (config.device.type == 'cuda')
+
+        print(f'Training component: {self.model_type} model.')
+        best_perf, model_path = self.model.train(train_data, corrupter, tester,
+                                                use_early_stopping=use_early_stopping, patience=patience, optimizer_name=optimizer_name,
+                                                use_gpu=use_gpu, is_save_model=is_save_model)
+        print(f'Trained component successfully: {self.model_type} model.')
+        if is_save_model:
+            self.model_path = model_path
+            return best_perf, model_path
+        return best_perf, None
     
-    def save(self, model_path: str) -> None:
-        if (self.n_entity is None or self.n_relation is None):
+    def save(self) -> str:
+        if self.model_path is None:
             raise ValueError("Component must be fitted before being saved!")
         
-        print(f"Saving component by path: {model_path}")
-        self.model.save(model_path)
-        print(f"Saved component successfully: {self.model_type} model.")
+        print(f"Saving component: {self.model_type} model.")
+        self.model_path = self.model.save()
+        print(f"Saved component successfully by: {self.model_path}")
 
     def get_score(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
         return self.model.get_score(head, relation, tail)
 
-    def train(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data: tuple,
-              use_early_stopping: bool=False, patience: int=10, optimizer_name: str='Adam') -> Tuple[float, str]:    
-        if (self.n_entity is None or self.n_relation is None):
-            print(f"Component must be fitted before being trained!")
-            return None, None
-        
-        # overwrite_config_with_args(["--pretrain_config=" + self.model_type])
-        overwrite_config_with_args(["--log.prefix=" + self.model_type + '_'])
-        logger_init()
-
-        if self.model_type == 'TransE':
-            corrupter = BernCorrupter(train_data, self.n_entity, self.n_relation)
-            self.model = TransE(self.n_entity, self.n_relation, self.model_config)
-        elif self.model_type == 'TransD':
-            corrupter = BernCorrupter(train_data, self.n_entity, self.n_relation)
-            self.model = TransD(self.n_entity, self.n_relation, self.model_config)
-        elif self.model_type == 'DistMult':
-            corrupter = BernCorrupterMulti(train_data, self.n_entity, self.n_relation, self.model_config.n_sample)
-            self.model = DistMult(self.n_entity, self.n_relation, self.model_config)
-        elif self.model_type == 'ComplEx':
-            corrupter = BernCorrupterMulti(train_data, self.n_entity, self.n_relation, self.model_config.n_sample)
-            self.model = ComplEx(self.n_entity, self.n_relation, self.model_config)    
-        tester = lambda: self.model.evaluate(valid_data, self.n_entity, heads, tails)
-
-        print(f'Training component: {self.model_type} model.')
-        best_perf, model_path = self.model.train(train_data, corrupter, tester,
-                                                use_early_stopping=use_early_stopping, patience=patience, optimizer_name=optimizer_name)
-        print(f'Trained component successfully: {self.model_type} model.')
-        self.model_path = model_path
-        return best_perf, model_path
-    
     def generator_step(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor,
                         n_sample: int=1, temperature: float=1.0, train: bool=True) -> Generator[torch.Tensor, torch.Tensor, None]:
         """
@@ -110,16 +113,16 @@ class Component():
         """
         if (self.role != "generator"):
             raise ValueError("This component is not a generator!")
-        if (self.model is None):
-            raise ValueError("Model must be loaded before generator step!")
+        if not self.model.is_trained_or_loaded():
+            raise ValueError("Generator must be pretrained or loaded before generator step!")
 
         # Forward pass: generate samples
         n, m = tail.size()
-        relation_var = Variable(relation.to(device))
-        head_var = Variable(head.to(device))
-        tail_var = Variable(tail.to(device))
+        relation_var = Variable(relation.to(config.device))
+        head_var = Variable(head.to(config.device))
+        tail_var = Variable(tail.to(config.device))
 
-        logits = self.model.model.prob_logit(head_var, relation_var, tail_var) / temperature
+        logits = self.model.get_prob_logit(head_var, relation_var, tail_var) / temperature
         probs = nnf.softmax(logits, dim=-1)
         row_idx = torch.arange(0, n).type(torch.LongTensor).unsqueeze(1).expand(n, n_sample)
         sample_idx = torch.multinomial(probs, n_sample, replacement=True)
@@ -133,32 +136,32 @@ class Component():
         if train:            
             self.model._ensure_optimizer()
             self.model.model.zero_grad()
+
             log_probs = nnf.log_softmax(logits, dim=-1)
-            reinforce_loss = -torch.sum(Variable(rewards) * log_probs[row_idx.to(device), sample_idx.data])
+            reinforce_loss = -torch.sum(Variable(rewards) * log_probs[row_idx.to(config.device), sample_idx.data])
             reinforce_loss.backward()
+
             self.model.opt.step()
             self.model.model.constraint()
         yield None
 
     def discriminator_step(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor,
-                            head_fake: torch.Tensor=None, tail_fake: torch.Tensor=None, train: bool=True) -> Tuple[torch.Tensor, torch.Tensor]:
+                            head_fake: torch.Tensor, tail_fake: torch.Tensor, train: bool=True) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Discriminator step: distinguish real from fake triples
         """
         if (self.role != "discriminator"):
             raise ValueError("This component is not a discriminator!")
-        if (self.model is None):
-            raise ValueError("Model must be loaded before discriminator step!")
-
-        if head_fake is None or tail_fake is None:
-            raise ValueError("head_fake and tail_fake must be provided for discriminator step!")
+        if not self.model.is_trained_or_loaded():
+            raise ValueError("Discriminator must be pretrained or loaded before discriminator step!")
         
         # Forward pass: compute losses and scores
-        head_var = Variable(head.to(device))
-        relation_var = Variable(relation.to(device))
-        tail_var = Variable(tail.to(device))
-        head_fake_var = Variable(head_fake.to(device))
-        tail_fake_var = Variable(tail_fake.to(device))
+        head_var = Variable(head.to(config.device))
+        relation_var = Variable(relation.to(config.device))
+        tail_var = Variable(tail.to(config.device))
+        
+        head_fake_var = Variable(head_fake.to(config.device))
+        tail_fake_var = Variable(tail_fake.to(config.device))
         
         losses = self.model.model.pair_loss(head_var, relation_var, tail_var, head_fake_var, tail_fake_var)
         fake_scores = self.model.model.score(head_fake_var, relation_var, tail_fake_var)
@@ -167,207 +170,121 @@ class Component():
         if train:
             self.model._ensure_optimizer()
             self.model.model.zero_grad()
+
             torch.sum(losses).backward()
+
             self.model.opt.step()
             self.model.model.constraint()
         return losses.data, -fake_scores.data
-        
-    def evaluate(self, test_data: tuple, heads: list, tails: list) -> dict:
-        """
-        Evaluate the model on Link Prediction task.
-        """
-        if (self.n_entity is None or self.n_relation is None):
-            raise ValueError("Component must be fitted before being tested!")
-        if (self.model_path is None):
+
+    def evaluate_on_ranking(self, test_data: tuple, heads: torch.Tensor, tails: torch.Tensor,
+                            filt=True, k_list=[1, 3, 10]) -> dict:
+        if not self.model.is_trained_or_loaded():
             raise ValueError("Component must be trained before being tested!")
         
-        print(f"Testing component: {self.model_type} model.")
-        metrics = self.model.evaluate(test_data, self.n_entity, heads, tails)
+        print(f"Testing component on task ranking: {self.model_type} model.")
+        metrics = self.model.evaluate_on_ranking(test_data, self.n_entity, heads, tails,
+                                                 filt=filt, k_list=k_list)
         return metrics
+
+    def evaluate_on_classification(self, test_data: tuple, optimizing_metric='accuracy') -> dict:
+        if not self.model.is_trained_or_loaded():
+            raise ValueError("Component must be trained before being tested!")
         
-    def find_optimal_threshold(self, valid_data: tuple, labels: list, n_thresholds: int=100) -> float:
-        """
-        Find the optimal threshold for triple classification using validation data.
-
-        Args:
-            valid_data: Tuple of (heads, relations, tails)
-            labels: Ground truth labels for validation data
-            n_thresholds: Number of threshold values to try
-
-        Returns:
-            Optimal threshold value that maximizes F1 score
-        """
-        heads, relations, tails = valid_data
-
-        # Compute scores for all validation samples (as Python floats on CPU)
-        scores_list = []
-        with torch.no_grad():
-            for i in range(len(heads)):
-                head = torch.LongTensor([heads[i]]).to(device)
-                relation = torch.LongTensor([relations[i]]).to(device)
-                tail = torch.LongTensor([tails[i]]).to(device)
-
-                score = self.get_score(head, relation, tail)
-                # convert tensor on GPU to Python float
-                if isinstance(score, torch.Tensor):
-                    score = score.detach().cpu().item()
-                scores_list.append(float(score))
-
-        # Try different threshold values
-        min_score = min(scores_list)
-        max_score = max(scores_list)
-        threshold_values = np.linspace(min_score, max_score, n_thresholds)
-
-        best_f1 = 0.0
-        best_threshold = 0.0
-
-        # Determine if model is distance-based or similarity-based
-        is_distance_based = self.model_type in ['TransE', 'TransD']
-
-        # Ensure labels are plain Python ints
-        labels_list = [int(x) for x in labels]
-
-        for threshold in threshold_values:
-            predictions = []
-            for score in scores_list:
-                if is_distance_based:
-                    predictions.append(1 if score < threshold else 0)
-                else:
-                    predictions.append(1 if score > threshold else 0)
-
-            metrics = classification_metrics(predictions=predictions, true_labels=labels_list, scores=scores_list)
-            f1 = metrics.get('f1', 0.0)
-            
-            if f1 > best_f1:
-                best_f1 = f1
-                best_threshold = threshold
-
-        logging.info(f"Optimal threshold: {best_threshold:.4f} (F1: {best_f1:.4f})")
-        return best_threshold
+        print(f"Testing component on task classification: {self.model_type} model.")
+        metrics = self.model.evaluate_on_classification(test_data, optimizing_metric=optimizing_metric)
+        return metrics
 
 
 class KBGAN():
-    def __init__(self, discriminator_type="TransE", generator_type="DistMult"):
+    def __init__(self, discriminator_type: str, generator_type: str,
+                 n_entity: int, n_relation: int):
         """
         discriminator_type = ["TransE", "TransD"]
         generator_type = ["DistMult", "ComplEx"]
         """
         self.discriminator_type = discriminator_type
-        self.discriminator = Component(role="discriminator", model_type=discriminator_type)
+        self.discriminator = Component(role="discriminator", model_type=discriminator_type,
+                                       n_entity=n_entity, n_relation=n_relation)
 
         self.generator_type = generator_type
-        self.generator = Component(role="generator", model_type=generator_type)
+        self.generator = Component(role="generator", model_type=generator_type,
+                                   n_entity=n_entity, n_relation=n_relation)
 
-        self.discriminator_path = None
-        self.generator_path = None
-        self.kbgan_path = None 
-        self.n_entity = None
-        self.n_relation = None
-    
-    def fit(self, n_entity: int, n_relation: int) -> None:
         self.n_entity = n_entity
         self.n_relation = n_relation
+        self.discriminator_path = None
+        self.generator_path = None
 
-        self.discriminator.fit(n_entity, n_relation)
-        self.generator.fit(n_entity, n_relation)
+        task_dir = '.\\models\\' + config._config.dataset + '\\' + config._config.task
+        os.makedirs(task_dir, exist_ok=True)
+        model_name = 'kbgan_' + 'dis-' + self.discriminator_type + '_gen-' + self.generator_type + '.mdl'
+        self.kbgan_path = os.path.join(task_dir, model_name)
 
-    def load_component(self, component_role: str, component_path: str=None) -> None:
-        """
-        component_role = ["discriminator", "generator"]
-        """
-        if (self.n_entity is None or self.n_relation is None):
-            raise ValueError("Component must be fitted before being loaded!")
-        
-        if component_role == "discriminator":
-            print(f"Loading discriminator: {self.discriminator_type} model.")
-            self.discriminator.load(component_path)
-            print(f"Loaded discriminator successfully by path: {component_path}")
-            self.discriminator_path = component_path
+        self.n_sample = config._config.KBGAN.n_sample
+        self.temperature = config._config.KBGAN.temperature
+        self.n_epoch = config._config.KBGAN.n_epoch
+        self.n_batch = config._config.KBGAN.n_batch
 
-        elif component_role == "generator":
-            print(f"Loading generator: {self.generator_type} model.")
-            self.generator.load(component_path)
-            print(f"Loaded generator successfully by path: {component_path}")
-            self.generator_path = component_path
+    def load_discriminator(self, discriminator_path: str=None) -> None:
+        print(f"Loading discriminator: {self.discriminator_type} model.")
+        self.discriminator.load(discriminator_path)
+        self.discriminator_path = discriminator_path
+        print(f"Loaded discriminator successfully by path: {discriminator_path}")
 
-    def evaluate_component(self, component_role: str, heads, tails, test_data) -> dict:
-        """
-        component_role = ["discriminator", "generator"]
-        """
-        if (self.n_entity is None or self.n_relation is None):
-            raise ValueError("Component must be fitted before being tested!")
-        if (component_role != "discriminator" and component_role != "generator"):
-            raise ValueError("Component role must be either 'discriminator' or 'generator'!")
-        
-        if not isinstance(test_data[0], torch.Tensor):
-            test_data = [torch.LongTensor(vec) for vec in test_data]
+    def load_generator(self, generator_path: str=None) -> None:
+        print(f"Loading generator: {self.generator_type} model.")
+        self.generator.load(generator_path)
+        self.generator_path = generator_path
+        print(f"Loaded generator successfully by path: {generator_path}")
 
-        if component_role == "discriminator":
-            if (self.discriminator_path is None):
-                raise ValueError("Discriminator must be pretrained before being tested!")
-            
-            print(f"Testing discriminator: {self.discriminator_type} model.")
-            return self.discriminator.evaluate(test_data, heads, tails)
-        
-        if component_role == "generator":
-            if (self.generator_path is None):
-                raise ValueError("Generator must be pretrained before being tested!")
-            
-            print(f"Testing generator: {self.generator_type} model.")
-            return self.generator.evaluate(test_data, heads, tails)
-
-    def load(self, kbgan_path: str) -> None:
-        if (self.n_entity is None or self.n_relation is None):
-            raise ValueError("Model must be fitted before being loaded!")
-        
-        print(f"Loading KBGAN (discriminator) by path: {kbgan_path}")
+    def load_kbgan(self, kbgan_path: str) -> None:      
+        print(f"Loading KBGAN (discriminator)...")
         self.discriminator.load(kbgan_path)
         self.kbgan_path = kbgan_path
-        print(f"Loaded KBGAN (discriminator) successfully.")
+        print(f"Loaded KBGAN (discriminator) successfully by: {self.kbgan_path}")
 
-    def save(self, kbgan_path: str) -> None:
-        if (self.n_entity is None or self.n_relation is None):
-            raise ValueError("Model must be fitted before being saved!")
-        
-        print(f"Saving KBGAN (discriminator) by path: {kbgan_path}")
-        self.discriminator.save(kbgan_path)
-        print(f"Saved KBGAN (discriminator) successfully.")
+    def save_kbgan(self) -> str: 
+        if self.kbgan_path is None:
+            raise ValueError("KBGAN path is not set. Cannot save model.")
+              
+        print(f"Saving KBGAN (discriminator)...")
+        self.kbgan_path = self.discriminator.save()
+        print(f"Saved KBGAN (discriminator) successfully to: {self.kbgan_path}")
 
-    def pretrain(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data: tuple,
-                use_early_stopping: bool=False, patience: int=10, optimizer_name: str='Adam') -> Tuple[float, str, float, str]:
-        if (self.n_entity is None or self.n_relation is None):
-            raise ValueError("Model must be fitted before being pretrained!")
-        
+    def train_components(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data: tuple,
+                use_early_stopping: bool=False, patience: int=10, optimizer_name: str='Adam',
+                is_save_components: bool=True) -> Tuple[float, str | None, float, str | None]:        
         if not isinstance(train_data[0], torch.Tensor):
             train_data = [torch.LongTensor(vec) for vec in train_data]
         if not isinstance(valid_data[0], torch.Tensor):
             valid_data = [torch.LongTensor(vec) for vec in valid_data]
         
-        overwrite_config_with_args(["--log.prefix=" + self.discriminator_type + '-' + self.generator_type + "_"])
-        logger_init()
+        config.overwrite_config_with_args(["--log.prefix=" + self.discriminator_type + '-' + self.generator_type + "_"])
+        config.logger_init()
 
-        print(f"Pretraining KBGAN: {self.generator_type} generator, {self.discriminator_type} discriminator.")
-
-        print(f"Pretraining discriminator: {self.discriminator_type} model.")
+        print(f"Training KBGAN's components: {self.generator_type} generator, {self.discriminator_type} discriminator.")
+        print(f"Training discriminator...")
         best_perf_d, path_d = self.discriminator.train(heads, tails, train_data, valid_data,
-                                                    use_early_stopping=use_early_stopping, patience=patience, optimizer_name=optimizer_name)
-        self.discriminator_path = path_d
-        print(f"Pretrained discriminator saved in {path_d}.")
+                                                    use_early_stopping=use_early_stopping, patience=patience, optimizer_name=optimizer_name,
+                                                    is_save_model=is_save_components)
+        if is_save_components and path_d is not None:
+            self.discriminator_path = path_d
+            print(f"Trained discriminator is saved to: {path_d}")
 
-        print(f"Pretraining generator: {self.generator_type} model.")
+        print(f"Training generator...")
         best_perf_g, path_g = self.generator.train(heads, tails, train_data, valid_data,
-                                                    use_early_stopping=use_early_stopping, patience=patience, optimizer_name=optimizer_name)
-        self.generator_path = path_g
-        print(f"Pretrained generator saved in {path_g}.")
-
-        print(f"Pretrained KBGAN: {self.generator_type} generator, {self.discriminator_type} discriminator.")
+                                                    use_early_stopping=use_early_stopping, patience=patience, optimizer_name=optimizer_name,
+                                                    is_save_model=is_save_components)
+        if is_save_components and path_g is not None:
+            self.generator_path = path_g
+            print(f"Trained generator is saved to: {path_g}.")
         return best_perf_d, path_d, best_perf_g, path_g
            
-    def train(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data: tuple,
-                use_early_stopping: bool=False, patience: int=10, optimizer_name: str = 'Adam') -> Tuple[float, str]:
-        if (self.n_entity is None or self.n_relation is None):
-            raise ValueError("Model must be fitted before being trained!")
-        if (self.discriminator.model is None or self.generator.model is None):
+    def train_kbgan(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data: tuple,
+                use_early_stopping: bool=False, patience: int=10, optimizer_name: str = 'Adam',
+                is_save_kbgan: bool=True) -> Tuple[float, str]:
+        if (not self.generator.model.is_trained_or_loaded()) or (not self.discriminator.model.is_trained_or_loaded()):
             raise ValueError("Both generator and discriminator must be pretrained or loaded before being trained!")
         
         if not isinstance(train_data[0], torch.Tensor):
@@ -375,8 +292,8 @@ class KBGAN():
         if not isinstance(valid_data[0], torch.Tensor):
             valid_data = [torch.LongTensor(vec) for vec in valid_data]
         
-        overwrite_config_with_args(["--log.prefix=" + self.discriminator_type + '-' + self.generator_type + "_"])
-        logger_init()
+        config.overwrite_config_with_args(["--log.prefix=" + self.discriminator_type + '-' + self.generator_type + "_"])
+        config.logger_init()
 
         # Initialize optimizers according to optimizer_name for both models
         opt_map = {
@@ -393,31 +310,29 @@ class KBGAN():
         except Exception:
             pass
 
-        corrupter = BernCorrupterMulti(train_data, self.n_entity, self.n_relation, config().KBGAN.n_sample)
+        corrupter = BernCorrupterMulti(train_data, self.n_entity, self.n_relation, self.n_sample)
         head, relation, tail = train_data
         n_train = len(head)
-        n_epoch = config().KBGAN.n_epoch
-        n_batch = config().KBGAN.n_batch
 
-        model_name = 'kbgan_' + 'dis-' + self.discriminator_type + '_gen-' + self.generator_type + '.mdl'
-        best_perf = 0
-        avg_reward = 0
+        best_perf = 0.0
+        avg_reward = 0.0
         patience_counter = 0
 
         print(f'Training KBGAN: {self.generator_type} generator, {self.discriminator_type} discriminator.')
-        for epoch in range(n_epoch):
+        for epoch in range(self.n_epoch):
             epoch_d_loss = 0
             epoch_reward = 0
 
             head_cand, relation_cand, tail_cand = corrupter.corrupt(head, relation, tail, keep_truth=False)
-            for h, r, t, hs, rs, ts in batch_by_num(n_batch, head, relation, tail, head_cand, relation_cand, tail_cand, n_sample=n_train):
-                gen_step = self.generator.generator_step(hs, rs, ts, temperature=config().KBGAN.temperature)
+            for h, r, t, hs, rs, ts in batch_by_num(self.n_batch, head, relation, tail, head_cand, relation_cand, tail_cand, n_sample=n_train):
+                gen_step = self.generator.generator_step(hs, rs, ts, temperature=self.temperature)
                 head_smpl, tail_smpl = next(gen_step)
                 
                 losses, rewards = self.discriminator.discriminator_step(h, r, t, head_fake=head_smpl.squeeze(), tail_fake=tail_smpl.squeeze())
                 epoch_reward += torch.sum(rewards)
 
                 rewards = rewards - avg_reward
+
                 # Update generator with rewards
                 try:
                     gen_step.send(rewards.unsqueeze(1))
@@ -428,18 +343,18 @@ class KBGAN():
             avg_loss = epoch_d_loss / n_train
             avg_reward = epoch_reward / n_train
 
-            logging.info('Epoch %d/%d, D_loss=%f, reward=%f', epoch + 1, n_epoch, avg_loss, avg_reward)
-            save_dir = '.\\output\\' + config().dataset + '\\' + config().task
-            os.makedirs(save_dir, exist_ok=True)
-            kbgan_path = os.path.join(save_dir, model_name)
+            logging.info('Epoch %d/%d, D_loss=%f, reward=%f', epoch + 1, self.n_epoch, avg_loss, avg_reward)
 
             if (epoch + 1) % config().KBGAN.epoch_per_test == 0:
                 metrics = self.discriminator.model.evaluate(valid_data, self.n_entity, heads, tails, filt=True)
                 perf = metrics['MRR']
                 if perf > best_perf:
+                    if is_save_kbgan:
+                        print(f"Saving KBGAN at epoch {epoch + 1} with MRR {best_perf}.")
+                        self.kbgan_path = self.save_kbgan()
+                        print(f"Saved KBGAN successfully to: {self. kbgan_path}")
                     best_perf = perf
                     patience_counter = 0
-                    self.discriminator.save(kbgan_path)
                 else:
                     patience_counter += 1
                     
@@ -447,92 +362,69 @@ class KBGAN():
                     logging.info('Early stopping triggered at epoch %d (patience=%d)', epoch + 1, patience)
                     break
         print(f'Trained KBGAN successfully: {self.generator_type} generator, {self.discriminator_type} discriminator.')
-        self.kbgan_path = kbgan_path
-        return best_perf, kbgan_path
+        if is_save_kbgan:
+            print(f"Saving trained KBGAN (discriminator) with best MRR {best_perf}.")
+            self.kbgan_path = self.save_kbgan()
+            print(f"Saved trained KBGAN (discriminator) successfully to: {self.kbgan_path}")
+            return best_perf, self.kbgan_path
+        return best_perf, None
 
-    def evaluate_on_link_prediction(self, heads: torch.Tensor, tails: torch.Tensor, test_data: tuple) -> dict:
-        if (self.n_entity is None or self.n_relation is None):
-            raise ValueError("Model must be fitted before being tested!")
-        if (self.kbgan_path is None):
-            raise ValueError("Model must be trained before being tested!")
+    def evaluate_kbgan_on_link_prediction(self, heads: torch.Tensor, tails: torch.Tensor, test_data: tuple,
+                                        filt: bool=True, k_list: list=[1, 3, 10]) -> dict:
+        if (not self.discriminator.model.is_trained_or_loaded()):
+            raise ValueError("KBGAN (discriminator) must be trained before being tested!")
         
         if not isinstance(test_data[0], torch.Tensor):
             test_data = [torch.LongTensor(vec) for vec in test_data]
 
-        print("Evaluating KBGAN discriminator on Link Prediction...")
-        metrics = self.discriminator.model.evaluate(test_data, self.n_entity, heads, tails, filt=True)
+        print("Evaluating KBGAN (discriminator) on Link Prediction...")
+        metrics = self.discriminator.model.evaluate_on_ranking(test_data, self.n_entity, heads, tails, filt=filt, k_list=k_list)
         return metrics
 
-    def evaluate_on_triple_classification(self, test_data_with_labels: tuple, valid_data_with_labels: tuple = None,
-                                          threshold: float = None, auto_threshold: bool = True) -> Tuple[dict, float, list, list]:
-        if (self.n_entity is None or self.n_relation is None):
-            raise ValueError("Model must be fitted before being tested!")
-        if (self.kbgan_path is None):
-            raise ValueError("Model must be trained before being tested!")
+    def evaluate_kbgan_on_triple_classification(self, test_data_with_labels: tuple, optimizing_metric='accuracy') -> Tuple[dict, float, list, list]:
+        if (not self.discriminator.model.is_trained_or_loaded()):
+            raise ValueError("KBGAN (discriminator) must be trained before being tested!")
         
-        heads_test, relations_test, tails_test, labels = test_data_with_labels
         print("Evaluating KBGAN discriminator on Triple Classification...")
+        metrics = self.discriminator.evaluate_on_classification(test_data_with_labels, optimizing_metric=optimizing_metric)
+        return metrics
 
-        scores_list = []
-        with torch.no_grad():
-            for i in range(len(heads_test)):
-                head = torch.LongTensor([heads_test[i]]).to(device)
-                relation = torch.LongTensor([relations_test[i]]).to(device)
-                tail = torch.LongTensor([tails_test[i]]).to(device)
+    def evaluate_discriminator_on_link_prediction(self, heads: torch.Tensor, tails: torch.Tensor, test_data: tuple,
+                                        filt: bool=True, k_list: list=[1, 3, 10]) -> dict:
+        if (not self.discriminator.model.is_trained_or_loaded()):
+            raise ValueError("Discriminator must be trained before being tested!")
+    
+        if not isinstance(test_data[0], torch.Tensor):
+            test_data = [torch.LongTensor(vec) for vec in test_data]
 
-                score = self.discriminator.get_score(head, relation, tail)
-                # convert tensor on GPU to Python float
-                if isinstance(score, torch.Tensor):
-                    score = score.detach().cpu().item()
-                scores_list.append(float(score))
+        print("Evaluating discriminator on Link Prediction...")
+        metrics = self.discriminator.model.evaluate_on_ranking(test_data, self.n_entity, heads, tails, filt=filt, k_list=k_list)
+        return metrics
+    
+    def evaluate_generator_on_link_prediction(self, heads: torch.Tensor, tails: torch.Tensor, test_data: tuple,
+                                        filt: bool=True, k_list: list=[1, 3, 10]) -> dict:
+        if (not self.generator.model.is_trained_or_loaded()):
+            raise ValueError("Generator must be trained before being tested!")
+        
+        if not isinstance(test_data[0], torch.Tensor):
+            test_data = [torch.LongTensor(vec) for vec in test_data]
 
-        # Determine threshold
-        if threshold is None and auto_threshold and valid_data_with_labels is not None:
-            # expect valid_data_with_labels to be (heads, relations, tails, labels)
-            try:
-                valid_data = valid_data_with_labels[:3]
-                if not isinstance(valid_data[0], torch.Tensor):
-                    valid_data = [torch.LongTensor(vec) for vec in valid_data]
-
-                valid_labels = valid_data_with_labels[3]
-                threshold = self.discriminator.find_optimal_threshold(valid_data, valid_labels, n_thresholds=100)
-                logging.info(f"Auto-computed threshold: {threshold:.4f}")
-            except Exception as e:
-                logging.error(f"Error while auto-computing threshold: {e}")
-                threshold = 0.0
-        elif threshold is None:
-            threshold = 0.0
-            logging.info(f"Using default threshold: {threshold:.4f}")
-
-        is_distance_based = self.discriminator_type in ['TransE', 'TransD']
-        predictions = []
-        for score in scores_list:
-            if is_distance_based:
-                predictions.append(1 if score < threshold else 0)
-            else:
-                predictions.append(1 if score > threshold else 0)
-
-        # Ensure labels are python ints and not tensors
-        labels_list = [int(x) for x in labels] if labels is not None else []
-
-        print('Prediction:', predictions[:10])
-        print('Labels:', labels_list[:10])
-        print('Scores:', scores_list[:10])
-        result_metrics = classification_metrics(predictions=predictions, true_labels=labels_list, scores=scores_list)
-
-        metrics = {}
-        metrics['Accuracy'] = result_metrics['accuracy']
-        metrics['Precision'] = result_metrics['precision']
-        metrics['Recall'] = result_metrics['recall']
-        metrics['F1'] = result_metrics['f1']
-        metrics['PR_AUC'] = result_metrics['pr_auc']
-        metrics['ROC_AUC'] = result_metrics['roc_auc']
-
-        metrics_str = f"Accuracy = {result_metrics['accuracy']:.4f}\n"
-        metrics_str += f"Precision = {result_metrics['precision']:.4f}\n"
-        metrics_str += f"Recall = {result_metrics['recall']:.4f}\n"
-        metrics_str += f"F1 Score = {result_metrics['f1']:.4f}\n"
-        metrics_str += f"PR AUC = {result_metrics['pr_auc']:.4f}\n"
-        metrics_str += f"ROC AUC = {result_metrics['roc_auc']:.4f}\n"
-        logging.info(metrics_str)
-        return metrics, threshold, predictions, scores_list
+        print("Evaluating generator on Link Prediction...")
+        metrics = self.generator.model.evaluate_on_ranking(test_data, self.n_entity, heads, tails, filt=filt, k_list=k_list)
+        return metrics
+    
+    def evaluate_discriminator_on_triple_classification(self, test_data: tuple, optimizing_metric='accuracy') -> dict:
+        if (not self.discriminator.model.is_trained_or_loaded()):
+            raise ValueError("Discriminator must be trained before being tested!")
+        
+        print("Evaluating discriminator on Triple Classification...")
+        metrics = self.discriminator.evaluate_on_classification(test_data, optimizing_metric=optimizing_metric)
+        return metrics
+    
+    def evaluate_generator_on_triple_classification(self, test_data: tuple, optimizing_metric='accuracy') -> dict:
+        if (not self.generator.model.is_trained_or_loaded()):
+            raise ValueError("Generator must be trained before being tested!")
+        
+        print("Evaluating generator on Triple Classification...")
+        metrics = self.generator.evaluate_on_classification(test_data, optimizing_metric=optimizing_metric)
+        return metrics

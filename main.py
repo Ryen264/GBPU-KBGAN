@@ -1,6 +1,5 @@
 import torch
 import os
-import argparse
 import sys
 from config import config, overwrite_config_with_args, logger_init
 from data_loader import index_entity_relation, graph_size, read_data
@@ -15,6 +14,11 @@ def main():
         overwrite_config_with_args(args)
         print("Running config:", _config)
 
+    _config.task = 'all'
+    _config.dataset = 'wn18rr'
+    _config['KBGAN']['n_epoch'] = 2
+    _config[_config.d_config]['n_epoch'] = 2
+    _config[_config.g_config]['n_epoch'] = 2
 
     # Init logging now that config is prepared
     logger_init()
@@ -45,71 +49,102 @@ def main():
     test_data   = [torch.LongTensor(vec) for vec in test_data]
 
     print(f"Running mode: {mode}")
-    model = KBGAN(discriminator_type="TransE", generator_type="DistMult")
-    model.fit(n_entity, n_relation)
+    model = KBGAN(discriminator_type="TransE", generator_type="DistMult",
+                  n_entity=n_entity, n_relation=n_relation)
     if mode == 'full-train':
         # Train 2 components
-        dis_best_perf, dis_model_path, gen_best_perf, gen_model_path = model.pretrain(heads, tails, train_data, valid_data_with_label,
-                                                                                        use_early_stopping=_config['KBGAN']['early_stopping_pretrain'], patience=_config['KBGAN']['patience'], optimizer_name=_config['KBGAN']['optimizer_name'])
-        # Test 2 components just be trained on link prediction
-        dis_metrics = model.evaluate_component("discriminator", heads, tails, test_data)
-        print(f"Discriminator metrics on Link Prediction:\n{dis_metrics}")
+        dis_best_perf, dis_path, gen_best_perf, gen_path = model.train_components(heads, tails, train_data, valid_data_with_label,
+                                                                                    use_early_stopping=_config['KBGAN']['early_stopping_pretrain'],
+                                                                                    patience=_config['KBGAN']['patience'],
+                                                                                    optimizer_name=_config['KBGAN']['optimizer_name'],
+                                                                                    is_save_components=True)
+        print("----------------")
 
-        gen_metrics = model.evaluate_component("generator", heads, tails, test_data)
-        print(f"Generator metrics on Link Prediction:\n{gen_metrics}")
+        # Test 2 components just be trained on link prediction
+        dis_ranking_metrics = model.evaluate_discriminator_on_link_prediction(heads, tails, test_data,
+                                                                                filt=True, k_list=[1, 3, 10])
+        print(f"Discriminator metrics on Link Prediction: {dis_ranking_metrics}")
+
+        gen_ranking_metrics = model.evaluate_generator_on_link_prediction(heads, tails, test_data,
+                                                                            filt=True, k_list=[1, 3, 10])
+        print(f"Generator metrics on Link Prediction: {gen_ranking_metrics}")
+        print("----------------")
+
+        # Test 2 components just be trained on triple classification
+        dis_classification_metrics = model.evaluate_discriminator_on_triple_classification(test_data_with_label, optimizing_metric='accuracy')
+        print(f"Discriminator metrics on Triple Classification: {dis_classification_metrics}")
+
+        gen_classification_metrics = model.evaluate_generator_on_triple_classification(test_data_with_label, optimizing_metric='accuracy')
+        print(f"Generator metrics on Triple Classification: {gen_classification_metrics}")
+        print("----------------")
 #
         # Train KBGAN
-        best_perf, model_path = model.train(heads, tails, train_data, valid_data,
-                                            use_early_stopping=_config['KBGAN']['early_stopping_train'], patience=_config['KBGAN']['patience'], optimizer_name=_config['KBGAN']['optimizer_name'])
-        
-        print(f"KBGAN model saved to: {model_path}")
-        print(f"Best validation performance on link prediction while training: {best_perf}")
-
+        best_perf, kbgan_path = model.train_kbgan(heads, tails, train_data, valid_data,
+                                                    use_early_stopping=_config['KBGAN']['early_stopping_train'],
+                                                    patience=_config['KBGAN']['patience'],
+                                                    optimizer_name=_config['KBGAN']['optimizer_name'],
+                                                    is_save_kbgan=True)        
+        print(f"Best validation performance while training: {best_perf}")
+        print("----------------")
         
         # Test KBGAN on link prediction
-        link_prediction_metrics = model.evaluate_on_link_prediction(heads, tails, test_data)
+        link_prediction_metrics = model.evaluate_kbgan_on_link_prediction(heads, tails, test_data,
+                                                                          filt=True, k_list=[1, 3, 10])
         print(f"Link prediction metrics:\n{link_prediction_metrics}")
+        print("----------------")
 
         # Test KBGAN on triple classification
-        triple_classification_metrics, threshold, predictions, scores_list = model.evaluate_on_triple_classification(test_data_with_label, valid_data_with_label, threshold=None, auto_threshold=True)
+        triple_classification_metrics = model.evaluate_kbgan_on_triple_classification(test_data_with_label, optimizing_metric='accuracy')
         print(f"Triple classification metrics:\n{triple_classification_metrics}")
+        print("----------------")
 
     elif mode == 'gan-train':
         # Load 2 pretrained components
         dis_model_path = './models/' + _config.dataset + '/' + _config.task + '/components/' + _config['d_config'] + '.mdl'
-        model.load_component(component_role="discriminator", component_path=dis_model_path)
+        model.load_discriminator(component_path=dis_model_path)
+
         gen_model_path = './models/' + _config.dataset + '/' + _config.task + '/components/' + _config['g_config'] + '.mdl'
-        model.load_component(component_role="generator", component_path=gen_model_path)
+        model.load_generator(component_path=gen_model_path)
+        print("----------------")
 
         # Train KBGAN
-        best_perf, model_path = model.train(heads, tails, train_data, valid_data,
-                                             use_early_stopping=_config['KBGAN']['early_stopping_train'], patience=_config['KBGAN']['patience'], optimizer_name=_config['KBGAN']['optimizer_name'])
-        print(f"KBGAN model saved to: {model_path}")
-        print(f"Best validation performance on link prediction while training: {best_perf}")
+        best_perf, kbgan_path = model.train_kbgan(heads, tails, train_data, valid_data,
+                                                    use_early_stopping=_config['KBGAN']['early_stopping_train'],
+                                                    patience=_config['KBGAN']['patience'],
+                                                    optimizer_name=_config['KBGAN']['optimizer_name'],
+                                                    is_save_kbgan=True)        
+        print(f"Best validation performance while training: {best_perf}")
+        print("----------------")
 
-        # Test KBGAN on Link Prediction
-        link_prediction_metrics = model.evaluate_on_link_prediction(heads, tails, test_data)
-        print(f"Link prediction metrics:\n{link_prediction_metrics}")
+        # Test KBGAN on task
+        if _config.task == 'link-prediction' or _config.task == 'all':
+            link_prediction_metrics = model.evaluate_kbgan_on_link_prediction(heads, tails, test_data,
+                                                                              filt=True, k_list=[1, 3, 10])
+            print(f"Link prediction metrics:\n{link_prediction_metrics}")
 
-        # Test KBGAN on Triple Classification
-        triple_classification_metrics, threshold, predictions, scores_list = model.evaluate_on_triple_classification(test_data_with_label, valid_data_with_label, threshold=None, auto_threshold=True)
-        print(f"Triple classification metrics:\n{triple_classification_metrics}")   
+        if _config.task == 'triple-classification' or _config.task == 'all':
+            triple_classification_metrics = model.evaluate_kbgan_on_triple_classification(test_data_with_label, optimizing_metric='accuracy')
+            print(f"Triple classification metrics:\n{triple_classification_metrics}") 
+        print("----------------")
         
     elif mode == 'test-only':
         # Load pretrained KBGAN
-        model_path = './models/' + _config.dataset + '/' + _config.task + '/kbgan/' + _config['d_config'] + '_' + _config['g_config'] + '.mdl'
-        model.load("models/wn18rr/triple-classification/components/DistMult.mdl")
+        kbgan_path = './models/' + _config.dataset + '/' + _config.task + 'kbgan_' + 'dis-' + _config['d_config'] + '_gen-' + _config['g_config'] + '.mdl'
+        model.load_kbgan(kbgan_path)
+        print("----------------")
 
-        # Test KBGAN on link prediction
-        link_prediction_metrics = model.evaluate_on_link_prediction(heads, tails, test_data)
-        print(f"Link prediction metrics:\n{link_prediction_metrics}")
+        # Test KBGAN on task
+        if _config.task == 'link-prediction' or _config.task == 'all':
+            link_prediction_metrics = model.evaluate_kbgan_on_link_prediction(heads, tails, test_data,
+                                                                              filt=True, k_list=[1, 3, 10])
+            print(f"Link prediction metrics:\n{link_prediction_metrics}")
 
-        # Test KBGAN on Triple Classification
-        triple_classification_metrics, threshold, predictions, scores_list = model.evaluate_on_triple_classification(test_data_with_label, valid_data_with_label, threshold=None, auto_threshold=True)
-        print(f"Triple classification metrics:\n{triple_classification_metrics}") 
+        if _config.task == 'triple-classification' or _config.task == 'all':
+            triple_classification_metrics = model.evaluate_kbgan_on_triple_classification(test_data_with_label, optimizing_metric='accuracy')
+            print(f"Triple classification metrics:\n{triple_classification_metrics}")
+        print("----------------")
     else: 
         print("Invalid mode. Please try again and specify a mode: full-train / gan-train / test-only") 
-
 
 if __name__ == '__main__':
     main()
