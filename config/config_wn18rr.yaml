@@ -20,7 +20,7 @@ TransE:
   n_epoch: 1000
   n_batch: 100
   epoch_per_test: 50
-  model_file: transe.mdl
+  model_file: TransE.mdl
 TransD:
   dim: 50
   margin: 3
@@ -28,7 +28,7 @@ TransD:
   n_epoch: 1000
   n_batch: 100
   epoch_per_test: 50
-  model_file: transd.mdl
+  model_file: TransD.mdl
 DistMult:
   dim: 50
   lam: 0.1
@@ -37,7 +37,7 @@ DistMult:
   n_epoch: 1000
   n_batch: 100
   epoch_per_test: 50
-  model_file: distmult.mdl
+  model_file: DistMult.mdl
 ComplEx:
   dim: 25
   lam: 0.1
@@ -46,7 +46,7 @@ ComplEx:
   n_epoch: 1000
   n_batch: 100
   epoch_per_test: 50
-  model_file: complex.mdl
+  model_file: ComplEx.mdl
 log:
   dump_config: false
   to_file: true

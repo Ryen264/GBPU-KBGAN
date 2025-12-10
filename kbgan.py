@@ -47,8 +47,19 @@ class Component():
             self.model = ComplEx(self.n_entity, self.n_relation, use_gpu=use_gpu)    
 
     def load(self, model_path: str) -> None:
-        print(f"Loading component: {self.model_type} model.")
-        self.model.load_model(model_path)
+        if (self.n_entity is None or self.n_relation is None):
+            raise ValueError("Component must be fitted before being loaded!")
+    
+        print(f"Loading component by path: {model_path}")
+        if self.model_type == "TransE":
+            self.model = TransE(self.n_entity, self.n_relation, self.model_config)
+        elif self.model_type == "TransD":
+            self.model = TransD(self.n_entity, self.n_relation, self.model_config)
+        elif self.model_type == "DistMult":
+            self.model = DistMult(self.n_entity, self.n_relation, self.model_config)
+        elif self.model_type == "ComplEx":
+            self.model = ComplEx(self.n_entity, self.n_relation, self.model_config)
+        self.model.load(model_path)
         self.model_path = model_path
         print(f"Loaded component successfully by: {self.model_path}")
 
@@ -183,6 +194,7 @@ class Component():
         print(f"Testing component on task classification: {self.model_type} model.")
         metrics = self.model.evaluate_on_classification(test_data, optimizing_metric=optimizing_metric)
         return metrics
+
 
 class KBGAN():
     def __init__(self, discriminator_type: str, generator_type: str,

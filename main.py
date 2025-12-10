@@ -24,7 +24,7 @@ def main():
     logger_init()
 
     # Load data
-    task_dir = '.\\data\\' + _config.dataset
+    task_dir = './data/' + _config.dataset
     kb_index = index_entity_relation(
         os.path.join(task_dir, 'train.txt'),
         os.path.join(task_dir, 'valid.txt'),
@@ -40,8 +40,8 @@ def main():
 
     # For task triple-classification, we need to read data with labels
     if _config.task == 'triple-classification' or _config.task == 'all':
-        valid_data_with_label   = read_data(os.path.join('.\\data\\' + _config.dataset + '_w_labels', 'valid.txt'), kb_index, with_label=True)
-        test_data_with_label    = read_data(os.path.join('.\\data\\' + _config.dataset + '_w_labels', 'test.txt'), kb_index, with_label=True)
+        valid_data_with_label   = read_data(os.path.join('./data/' + _config.dataset + '_w_labels', 'valid.txt'), kb_index, with_label=True)
+        test_data_with_label    = read_data(os.path.join('./data/' + _config.dataset + '_w_labels', 'test.txt'), kb_index, with_label=True)
 
     # Convert to tensors
     train_data  = [torch.LongTensor(vec) for vec in train_data]
@@ -100,10 +100,10 @@ def main():
 
     elif mode == 'gan-train':
         # Load 2 pretrained components
-        dis_model_path = '.\\models\\' + _config.dataset + '\\' + _config.task + '\\components\\' + _config['d_config'] + '.mdl'
+        dis_model_path = './models/' + _config.dataset + '/' + _config.task + '/components/' + _config['d_config'] + '.mdl'
         model.load_discriminator(component_path=dis_model_path)
 
-        gen_model_path = '.\\models\\' + _config.dataset + '\\' + _config.task + '\\components\\' + _config['g_config'] + '.mdl'
+        gen_model_path = './models/' + _config.dataset + '/' + _config.task + '/components/' + _config['g_config'] + '.mdl'
         model.load_generator(component_path=gen_model_path)
         print("----------------")
 
@@ -129,7 +129,7 @@ def main():
         
     elif mode == 'test-only':
         # Load pretrained KBGAN
-        kbgan_path = '.\\models\\' + _config.dataset + '\\' + _config.task + 'kbgan_' + 'dis-' + _config['d_config'] + '_gen-' + _config['g_config'] + '.mdl'
+        kbgan_path = './models/' + _config.dataset + '/' + _config.task + 'kbgan_' + 'dis-' + _config['d_config'] + '_gen-' + _config['g_config'] + '.mdl'
         model.load_kbgan(kbgan_path)
         print("----------------")
 
