@@ -32,6 +32,7 @@ class Component():
         else:
             print(f"Input model type should be in list [\"TransE\", \"TransD\", \"DistMult\", \"ComplEx\"]! Default model type: \"TransE\".")
             self.model_type = "TransE"
+        
 
         self.model_config = config()[self.model_type]
         self.model = None
@@ -48,7 +49,15 @@ class Component():
             raise ValueError("Component must be fitted before being loaded!")
     
         print(f"Loading component by path: {model_path}")
-        self.model.load_model(model_path)
+        if self.model_type == "TransE":
+            self.model = TransE(self.n_entity, self.n_relation, self.model_config)
+        elif self.model_type == "TransD":
+            self.model = TransD(self.n_entity, self.n_relation, self.model_config)
+        elif self.model_type == "DistMult":
+            self.model = DistMult(self.n_entity, self.n_relation, self.model_config)
+        elif self.model_type == "ComplEx":
+            self.model = ComplEx(self.n_entity, self.n_relation, self.model_config)
+        self.model.load(model_path)
         self.model_path = model_path
         print(f"Loaded component successfully: {self.model_type} model.")
     
@@ -190,7 +199,7 @@ class Component():
         """
         heads, relations, tails = valid_data
 
-        # Compute scores for all validation samples
+        # Compute scores for all validation samples (as Python floats on CPU)
         scores_list = []
         with torch.no_grad():
             for i in range(len(heads)):
@@ -199,7 +208,10 @@ class Component():
                 tail = torch.LongTensor([tails[i]]).to(device)
 
                 score = self.get_score(head, relation, tail)
-                scores_list.append(score)
+                # convert tensor on GPU to Python float
+                if isinstance(score, torch.Tensor):
+                    score = score.detach().cpu().item()
+                scores_list.append(float(score))
 
         # Try different threshold values
         min_score = min(scores_list)
@@ -212,6 +224,9 @@ class Component():
         # Determine if model is distance-based or similarity-based
         is_distance_based = self.model_type in ['TransE', 'TransD']
 
+        # Ensure labels are plain Python ints
+        labels_list = [int(x) for x in labels]
+
         for threshold in threshold_values:
             predictions = []
             for score in scores_list:
@@ -219,9 +234,9 @@ class Component():
                     predictions.append(1 if score < threshold else 0)
                 else:
                     predictions.append(1 if score > threshold else 0)
-            
-            metrics = classification_metrics(predictions, labels, scores=scores_list)
-            f1 = metrics['f1']
+
+            metrics = classification_metrics(predictions=predictions, true_labels=labels_list, scores=scores_list)
+            f1 = metrics.get('f1', 0.0)
             
             if f1 > best_f1:
                 best_f1 = f1
@@ -229,6 +244,7 @@ class Component():
 
         logging.info(f"Optimal threshold: {best_threshold:.4f} (F1: {best_f1:.4f})")
         return best_threshold
+
 
 class KBGAN():
     def __init__(self, discriminator_type="TransE", generator_type="DistMult"):
@@ -465,7 +481,10 @@ class KBGAN():
                 tail = torch.LongTensor([tails_test[i]]).to(device)
 
                 score = self.discriminator.get_score(head, relation, tail)
-                scores_list.append(score)
+                # convert tensor on GPU to Python float
+                if isinstance(score, torch.Tensor):
+                    score = score.detach().cpu().item()
+                scores_list.append(float(score))
 
         # Determine threshold
         if threshold is None and auto_threshold and valid_data_with_labels is not None:
@@ -478,8 +497,8 @@ class KBGAN():
                 valid_labels = valid_data_with_labels[3]
                 threshold = self.discriminator.find_optimal_threshold(valid_data, valid_labels, n_thresholds=100)
                 logging.info(f"Auto-computed threshold: {threshold:.4f}")
-            except Exception:
-                logging.info("Could not auto-compute threshold from provided validation data; using default 0.0")
+            except Exception as e:
+                logging.error(f"Error while auto-computing threshold: {e}")
                 threshold = 0.0
         elif threshold is None:
             threshold = 0.0
@@ -492,7 +511,14 @@ class KBGAN():
                 predictions.append(1 if score < threshold else 0)
             else:
                 predictions.append(1 if score > threshold else 0)
-        result_metrics = classification_metrics(predictions, list(labels) if labels is not None else [], scores=scores_list)
+
+        # Ensure labels are python ints and not tensors
+        labels_list = [int(x) for x in labels] if labels is not None else []
+
+        print('Prediction:', predictions[:10])
+        print('Labels:', labels_list[:10])
+        print('Scores:', scores_list[:10])
+        result_metrics = classification_metrics(predictions=predictions, true_labels=labels_list, scores=scores_list)
 
         metrics = {}
         metrics['Accuracy'] = result_metrics['accuracy']
