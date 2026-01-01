@@ -118,9 +118,9 @@ class Component():
 
         # Forward pass: generate samples
         n, m = tail.size()
-        relation_var = Variable(relation.to(config.device))
-        head_var = Variable(head.to(config.device))
-        tail_var = Variable(tail.to(config.device))
+        relation_var = Variable(relation.to(self.model.device))
+        head_var = Variable(head.to(self.model.device))
+        tail_var = Variable(tail.to(self.model.device))
 
         logits = self.model.get_prob_logit(head_var, relation_var, tail_var) / temperature
         probs = nnf.softmax(logits, dim=-1)
@@ -138,7 +138,7 @@ class Component():
             self.model.model.zero_grad()
 
             log_probs = nnf.log_softmax(logits, dim=-1)
-            reinforce_loss = -torch.sum(Variable(rewards) * log_probs[row_idx.to(config.device), sample_idx.data])
+            reinforce_loss = -torch.sum(Variable(rewards) * log_probs[row_idx.to(self.model.device), sample_idx.data])
             reinforce_loss.backward()
 
             self.model.opt.step()
@@ -156,12 +156,12 @@ class Component():
             raise ValueError("Discriminator must be pretrained or loaded before discriminator step!")
         
         # Forward pass: compute losses and scores
-        head_var = Variable(head.to(config.device))
-        relation_var = Variable(relation.to(config.device))
-        tail_var = Variable(tail.to(config.device))
+        head_var = Variable(head.to(self.model.device))
+        relation_var = Variable(relation.to(self.model.device))
+        tail_var = Variable(tail.to(self.model.device))
         
-        head_fake_var = Variable(head_fake.to(config.device))
-        tail_fake_var = Variable(tail_fake.to(config.device))
+        head_fake_var = Variable(head_fake.to(self.model.device))
+        tail_fake_var = Variable(tail_fake.to(self.model.device))
         
         losses = self.model.model.pair_loss(head_var, relation_var, tail_var, head_fake_var, tail_fake_var)
         fake_scores = self.model.model.score(head_fake_var, relation_var, tail_fake_var)

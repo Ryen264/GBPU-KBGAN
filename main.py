@@ -1,6 +1,7 @@
 import torch
 import os
 import sys
+import time
 from config import config, overwrite_config_with_args, logger_init
 from data_loader import index_entity_relation, graph_size, read_data
 from datasets import sparse_heads_tails, inplace_shuffle
@@ -9,6 +10,12 @@ from kbgan import KBGAN
 MODE = 'full-train'  # full-train / gan-train / test-only
 
 # ./main.py mode=<mode> [other optional args to overwrite config]
+
+def log_step(label: str, start_ts: float) -> float:
+    """Print elapsed time for a pipeline step and return a new start timestamp."""
+    elapsed = time.perf_counter() - start_ts
+    print(f"[TIMER] {label}: {elapsed:.2f}s")
+    return time.perf_counter()
 
 def main():    
     _config = config()
@@ -21,6 +28,8 @@ def main():
         overwrite_config_with_args(args)
         print("Running config:", _config)
 
+    t_total = time.perf_counter()
+
     _config.task = 'all'
     _config.dataset = 'wn18rr'
     _config['KBGAN']['n_epoch'] = 2
@@ -29,6 +38,7 @@ def main():
 
     # Init logging now that config is prepared
     logger_init()
+    t_step = time.perf_counter()
 
     # Load data
     task_dir = './data/' + _config.dataset
@@ -44,16 +54,19 @@ def main():
     valid_data = read_data(os.path.join(task_dir, 'valid.txt'), kb_index)
     test_data = read_data(os.path.join(task_dir, 'test.txt'), kb_index)
     heads, tails = sparse_heads_tails(n_entity, train_data, valid_data, test_data)
+    t_step = log_step("Data load", t_step)
 
     # For task triple-classification, we need to read data with labels
     if _config.task == 'triple-classification' or _config.task == 'all':
         valid_data_with_label   = read_data(os.path.join('./data/' + _config.dataset + '_w_labels', 'valid.txt'), kb_index, with_label=True)
         test_data_with_label    = read_data(os.path.join('./data/' + _config.dataset + '_w_labels', 'test.txt'), kb_index, with_label=True)
+        t_step = log_step("Labelled data load", t_step)
 
     # Convert to tensors
     train_data  = [torch.LongTensor(vec) for vec in train_data]
     valid_data  = [torch.LongTensor(vec) for vec in valid_data]
     test_data   = [torch.LongTensor(vec) for vec in test_data]
+    t_step = log_step("Tensor conversion", t_step)
 
     print(f"Running mode: {MODE}")
     model = KBGAN(discriminator_type="TransE", generator_type="DistMult",
@@ -65,6 +78,7 @@ def main():
                                                                                     patience=_config['KBGAN']['patience'],
                                                                                     optimizer_name=_config['KBGAN']['optimizer_name'],
                                                                                     is_save_components=True)
+        t_step = log_step("Pretrain components", t_step)
         print("----------------")
 
         # Test 2 components just be trained on link prediction
@@ -75,11 +89,13 @@ def main():
         gen_ranking_metrics = model.evaluate_generator_on_link_prediction(heads, tails, test_data,
                                                                             filt=True, k_list=[1, 3, 10])
         print(f"Generator metrics on Link Prediction: {gen_ranking_metrics}")
+        t_step = log_step("Component link prediction eval", t_step)
         print("----------------")
 
         # Test 2 components just be trained on triple classification
         dis_classification_metrics = model.evaluate_discriminator_on_triple_classification(test_data_with_label, optimizing_metric='accuracy')
         print(f"Discriminator metrics on Triple Classification: {dis_classification_metrics}")
+        t_step = log_step("Component triple classification eval", t_step)
 
         gen_classification_metrics = model.evaluate_generator_on_triple_classification(test_data_with_label, optimizing_metric='accuracy')
         print(f"Generator metrics on Triple Classification: {gen_classification_metrics}")
@@ -92,17 +108,20 @@ def main():
                                                     optimizer_name=_config['KBGAN']['optimizer_name'],
                                                     is_save_kbgan=True)        
         print(f"Best validation performance while training: {best_perf}")
+        t_step = log_step("Train KBGAN", t_step)
         print("----------------")
         
         # Test KBGAN on link prediction
         link_prediction_metrics = model.evaluate_kbgan_on_link_prediction(heads, tails, test_data,
                                                                           filt=True, k_list=[1, 3, 10])
         print(f"Link prediction metrics:\n{link_prediction_metrics}")
+        t_step = log_step("KBGAN link prediction eval", t_step)
         print("----------------")
 
         # Test KBGAN on triple classification
         triple_classification_metrics = model.evaluate_kbgan_on_triple_classification(test_data_with_label, optimizing_metric='accuracy')
         print(f"Triple classification metrics:\n{triple_classification_metrics}")
+        t_step = log_step("KBGAN triple classification eval", t_step)
         print("----------------")
 
     elif MODE == 'gan-train':
@@ -121,6 +140,7 @@ def main():
                                                     optimizer_name=_config['KBGAN']['optimizer_name'],
                                                     is_save_kbgan=True)        
         print(f"Best validation performance while training: {best_perf}")
+        t_step = log_step("Train KBGAN", t_step)
         print("----------------")
 
         # Test KBGAN on task
@@ -128,10 +148,12 @@ def main():
             link_prediction_metrics = model.evaluate_kbgan_on_link_prediction(heads, tails, test_data,
                                                                               filt=True, k_list=[1, 3, 10])
             print(f"Link prediction metrics:\n{link_prediction_metrics}")
+            t_step = log_step("KBGAN link prediction eval", t_step)
 
         if _config.task == 'triple-classification' or _config.task == 'all':
             triple_classification_metrics = model.evaluate_kbgan_on_triple_classification(test_data_with_label, optimizing_metric='accuracy')
             print(f"Triple classification metrics:\n{triple_classification_metrics}") 
+            t_step = log_step("KBGAN triple classification eval", t_step)
         print("----------------")
         
     elif MODE == 'test-only':
@@ -149,9 +171,13 @@ def main():
         if _config.task == 'triple-classification' or _config.task == 'all':
             triple_classification_metrics = model.evaluate_kbgan_on_triple_classification(test_data_with_label, optimizing_metric='accuracy')
             print(f"Triple classification metrics:\n{triple_classification_metrics}")
+            t_step = log_step("KBGAN triple classification eval", t_step)
         print("----------------")
     else: 
         print("Invalid mode. Please try again and specify a mode: full-train / gan-train / test-only") 
+
+    total_elapsed = time.perf_counter() - t_total
+    print(f"[TIMER] Total runtime: {total_elapsed:.2f}s")
 
 if __name__ == '__main__':
     main()

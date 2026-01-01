@@ -229,9 +229,9 @@ class BaseModel(object):
             scores_list = []
             with torch.no_grad():
                 for i in range(len(heads)):
-                    head = torch.LongTensor([heads[i]]).to(config.device)
-                    relation = torch.LongTensor([relations[i]]).to(config.device)
-                    tail = torch.LongTensor([tails[i]]).to(config.device)
+                    head = torch.LongTensor([heads[i]]).to(self.device)
+                    relation = torch.LongTensor([relations[i]]).to(self.device)
+                    tail = torch.LongTensor([tails[i]]).to(self.device)
 
                     score = self.get_score(head, relation, tail)
                     scores_list.append(float(score.item()))
@@ -277,9 +277,9 @@ class BaseModel(object):
             for batch_head, batch_relation, batch_tail, batch_label in batch_by_size(config._config.test_batch_size,
                                                                                      heads_list, relations_list, tails_list, labels):
                 # ensure tensors on device
-                head_var = torch.LongTensor(batch_head).to(config.device)
-                relation_var = torch.LongTensor(batch_relation).to(config.device)
-                tail_var = torch.LongTensor(batch_tail).to(config.device)
+                head_var = torch.LongTensor(batch_head).to(self.device)
+                relation_var = torch.LongTensor(batch_relation).to(self.device)
+                tail_var = torch.LongTensor(batch_tail).to(self.device)
 
                 batch_scores = self.model.score(head_var, relation_var, tail_var)
                 batch_scores = batch_scores.detach().cpu().tolist()
