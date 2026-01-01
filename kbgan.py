@@ -345,7 +345,7 @@ class KBGAN():
 
             logging.info('Epoch %d/%d, D_loss=%f, reward=%f', epoch + 1, self.n_epoch, avg_loss, avg_reward)
 
-            if (epoch + 1) % config().KBGAN.epoch_per_test == 0:
+            if (epoch + 1) % config._config.KBGAN.epoch_per_test == 0:
                 metrics = self.discriminator.model.evaluate(valid_data, self.n_entity, heads, tails, filt=True)
                 perf = metrics['MRR']
                 if perf > best_perf:

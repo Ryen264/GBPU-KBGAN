@@ -234,7 +234,7 @@ class BaseModel(object):
                     tail = torch.LongTensor([tails[i]]).to(config.device)
 
                     score = self.get_score(head, relation, tail)
-                    scores_list.append(score)
+                    scores_list.append(float(score.item()))
 
             # Try different threshold values
             min_score = min(scores_list)
@@ -277,9 +277,9 @@ class BaseModel(object):
             for batch_head, batch_relation, batch_tail, batch_label in batch_by_size(config._config.test_batch_size,
                                                                                      heads_list, relations_list, tails_list, labels):
                 # ensure tensors on device
-                head_var = batch_head.long().to(config.device)
-                relation_var = batch_relation.long().to(config.device)
-                tail_var = batch_tail.long().to(config.device)
+                head_var = torch.LongTensor(batch_head).to(config.device)
+                relation_var = torch.LongTensor(batch_relation).to(config.device)
+                tail_var = torch.LongTensor(batch_tail).to(config.device)
 
                 batch_scores = self.model.score(head_var, relation_var, tail_var)
                 batch_scores = batch_scores.detach().cpu().tolist()

@@ -6,9 +6,16 @@ from data_loader import index_entity_relation, graph_size, read_data
 from datasets import sparse_heads_tails, inplace_shuffle
 from kbgan import KBGAN
 
-def main():
+MODE = 'full-train'  # full-train / gan-train / test-only
+
+# ./main.py mode=<mode> [other optional args to overwrite config]
+
+def main():    
     _config = config()
-    mode = sys.argv[1].split('=')[1] if len(sys.argv) > 1 else None
+    global MODE
+
+    if len(sys.argv) > 1:
+        MODE = sys.argv[1].split('=')[1]
     args = sys.argv[2:]
     if args:
         overwrite_config_with_args(args)
@@ -48,10 +55,10 @@ def main():
     valid_data  = [torch.LongTensor(vec) for vec in valid_data]
     test_data   = [torch.LongTensor(vec) for vec in test_data]
 
-    print(f"Running mode: {mode}")
+    print(f"Running mode: {MODE}")
     model = KBGAN(discriminator_type="TransE", generator_type="DistMult",
                   n_entity=n_entity, n_relation=n_relation)
-    if mode == 'full-train':
+    if MODE == 'full-train':
         # Train 2 components
         dis_best_perf, dis_path, gen_best_perf, gen_path = model.train_components(heads, tails, train_data, valid_data_with_label,
                                                                                     use_early_stopping=_config['KBGAN']['early_stopping_pretrain'],
@@ -98,7 +105,7 @@ def main():
         print(f"Triple classification metrics:\n{triple_classification_metrics}")
         print("----------------")
 
-    elif mode == 'gan-train':
+    elif MODE == 'gan-train':
         # Load 2 pretrained components
         dis_model_path = './models/' + _config.dataset + '/' + _config.task + '/components/' + _config['d_config'] + '.mdl'
         model.load_discriminator(component_path=dis_model_path)
@@ -127,7 +134,7 @@ def main():
             print(f"Triple classification metrics:\n{triple_classification_metrics}") 
         print("----------------")
         
-    elif mode == 'test-only':
+    elif MODE == 'test-only':
         # Load pretrained KBGAN
         kbgan_path = './models/' + _config.dataset + '/' + _config.task + 'kbgan_' + 'dis-' + _config['d_config'] + '_gen-' + _config['g_config'] + '.mdl'
         model.load_kbgan(kbgan_path)
