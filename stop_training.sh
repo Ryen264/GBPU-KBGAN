@@ -47,7 +47,7 @@ fi
 
 # If PID method failed, try to find a matching process and kill it (best-effort)
 echo "Attempting fallback kill by command match..."
-PIDS=$(pgrep -f "main.py --mode full" || true)
+PIDS=$(pgrep -f "main.py .*mode=full" || true)
 if [ -n "$PIDS" ]; then
     echo "Found processes: $PIDS"
     for p in $PIDS; do
