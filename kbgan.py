@@ -78,9 +78,16 @@ class Component():
             raise ValueError(f"Unsupported model type: {self.model_type}")
 
         if config._config.task == 'triple-classification' or config._config.task == 'all':
-            tester = lambda: classification_metrics(*self.model.evaluate_triple_classification(valid_data, self.n_entity, heads, tails))
+            optimizing_metric = config._config.get('optimizing_metric', 'accuracy')
+
+            def tester():
+                metrics = self.evaluate_on_classification(valid_data, optimizing_metric=optimizing_metric)
+                metrics = dict(metrics)  # copy so we can safely insert derived key
+                metrics.setdefault('MRR', metrics.get(optimizing_metric, 0.0))
+                return metrics
+
         elif config._config.task == 'link-prediction' or config._config.task == 'all':
-            tester = lambda: self.model.evaluate(valid_data, self.n_entity, heads, tails)
+            tester = lambda: self.evaluate_on_ranking(valid_data, heads, tails)
         else:
             raise ValueError(f"Unsupported task: {config._config.task}")
         use_gpu = (config.device.type == 'cuda')
@@ -246,11 +253,15 @@ class KBGAN():
 
     def save_kbgan(self) -> str: 
         if self.kbgan_path is None:
-            raise ValueError("KBGAN path is not set. Cannot save model.")
-              
+            task_dir = os.path.join('models', config._config.dataset, config._config.task)
+            os.makedirs(task_dir, exist_ok=True)
+            model_name = f"kbgan_dis-{self.discriminator_type}_gen-{self.generator_type}.mdl"
+            self.kbgan_path = os.path.join(task_dir, model_name)
+
         print(f"Saving KBGAN (discriminator)...")
         self.kbgan_path = self.discriminator.save()
         print(f"Saved KBGAN (discriminator) successfully to: {self.kbgan_path}")
+        return self.kbgan_path
 
     def train_components(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data: tuple,
                 use_early_stopping: bool=False, patience: int=10, optimizer_name: str='Adam',
@@ -346,7 +357,7 @@ class KBGAN():
             logging.info('Epoch %d/%d, D_loss=%f, reward=%f', epoch + 1, self.n_epoch, avg_loss, avg_reward)
 
             if (epoch + 1) % config._config.KBGAN.epoch_per_test == 0:
-                metrics = self.discriminator.model.evaluate(valid_data, self.n_entity, heads, tails, filt=True)
+                metrics = self.discriminator.evaluate_on_ranking(valid_data, heads, tails, filt=True)
                 perf = metrics['MRR']
                 if perf > best_perf:
                     if is_save_kbgan:
