@@ -16,13 +16,15 @@ echo "Process will run in background with nohup"
 echo ""
 
 # Build command
-PYTHON=${PYTHON:-python3}
+PYTHON="$(pwd)/.venv/bin/python"
+# MODE_ARG lets you override which mode to run; default matches main.py expectation: mode=full
+MODE_ARG=${MODE_ARG:-mode=full-train}
 # You can pass additional args to the training command via the EXTRA_ARGS env var.
 # Example: EXTRA_ARGS="--config-file ./config/config_fb15k237.yaml --override KBGAN.n_epoch=1000"
-CMD="$PYTHON main.py --mode full $EXTRA_ARGS"
+CMD="$PYTHON main.py $MODE_ARG $EXTRA_ARGS"
 
 # Run training with nohup using setsid to detach fully
-nohup setsid bash -lc "$CMD" > "$LOG_FILE" 2>&1 &
+nohup $CMD > "$LOG_FILE" 2>&1 &
 
 # Save the process ID
 PID=$!

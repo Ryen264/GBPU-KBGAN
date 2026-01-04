@@ -10,7 +10,7 @@ _config = None
 class ConfigDict(dict):
     __getattr__ = dict.__getitem__
 
-def config(config_path='.\\config\\config_wn18rr.yaml'):
+def config(config_path='./config/config_wn18rr.yaml'):
     """
     default: config("config_wn18rr.yaml")
     """
@@ -144,7 +144,7 @@ def logger_init():
     root_logger.addHandler(console_handler)
 
     if (config().log.to_file):
-        log_dir = '.\\logs\\' + config().dataset + '\\' + config().task
+        log_dir = './logs/' + config().dataset + '/' + config().task
         os.makedirs(log_dir, exist_ok=True)
         log_filename = os.path.join(
             log_dir,
