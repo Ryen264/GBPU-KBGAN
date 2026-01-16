@@ -8,7 +8,6 @@ from typing import Generator, Tuple
 
 from datasets import batch_by_num, BernCorrupterMulti, BernCorrupter
 from models import TransE, TransD, DistMult, ComplEx
-from metrics import classification_metrics
 import config
 
 class Component():
@@ -78,9 +77,9 @@ class Component():
             raise ValueError(f"Unsupported model type: {self.model_type}")
 
         if config._config.task == 'triple-classification' or config._config.task == 'all':
-            tester = lambda: classification_metrics(*self.model.evaluate_triple_classification(valid_data, self.n_entity, heads, tails))
+            tester = lambda: self.model.evaluate_on_classification(valid_data, optimizing_metric='accuracy')
         elif config._config.task == 'link-prediction' or config._config.task == 'all':
-            tester = lambda: self.model.evaluate(valid_data, self.n_entity, heads, tails)
+            tester = lambda: self.model.evaluate_on_ranking(valid_data, self.n_entity, heads, tails, filt=True, k_list=[1, 3, 10])
         else:
             raise ValueError(f"Unsupported task: {config._config.task}")
         use_gpu = (config.device.type == 'cuda')
@@ -102,6 +101,7 @@ class Component():
         print(f"Saving component: {self.model_type} model.")
         self.model_path = self.model.save()
         print(f"Saved component successfully by: {self.model_path}")
+        return self.model_path
 
     def get_score(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
         return self.model.get_score(head, relation, tail)
@@ -246,11 +246,16 @@ class KBGAN():
 
     def save_kbgan(self) -> str: 
         if self.kbgan_path is None:
-            raise ValueError("KBGAN path is not set. Cannot save model.")
+            # Construct path if not already set
+            task_dir = '.\\models\\' + config._config.dataset + '\\' + config._config.task
+            os.makedirs(task_dir, exist_ok=True)
+            model_name = 'kbgan_' + 'dis-' + self.discriminator_type + '_gen-' + self.generator_type + '.mdl'
+            self.kbgan_path = os.path.join(task_dir, model_name)
               
         print(f"Saving KBGAN (discriminator)...")
         self.kbgan_path = self.discriminator.save()
         print(f"Saved KBGAN (discriminator) successfully to: {self.kbgan_path}")
+        return self.kbgan_path
 
     def train_components(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data: tuple,
                 use_early_stopping: bool=False, patience: int=10, optimizer_name: str='Adam',
@@ -346,7 +351,7 @@ class KBGAN():
             logging.info('Epoch %d/%d, D_loss=%f, reward=%f', epoch + 1, self.n_epoch, avg_loss, avg_reward)
 
             if (epoch + 1) % config._config.KBGAN.epoch_per_test == 0:
-                metrics = self.discriminator.model.evaluate(valid_data, self.n_entity, heads, tails, filt=True)
+                metrics = self.discriminator.model.evaluate_on_ranking(valid_data, self.n_entity, heads, tails, filt=True)
                 perf = metrics['MRR']
                 if perf > best_perf:
                     if is_save_kbgan:

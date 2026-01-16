@@ -32,9 +32,9 @@ def main():
 
     _config.task = 'all'
     _config.dataset = 'wn18rr'
-    # _config['KBGAN']['n_epoch'] = 2
-    # _config[_config.d_config]['n_epoch'] = 2
-    # _config[_config.g_config]['n_epoch'] = 2
+    # _config['KBGAN']['n_epoch'] = 200
+    # _config[_config.d_config]['n_epoch'] = 100
+    # _config[_config.g_config]['n_epoch'] = 100
 
     # Init logging now that config is prepared
     logger_init()

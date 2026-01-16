@@ -225,20 +225,23 @@ class BaseModel(object):
             """
             heads, relations, tails = valid_data
 
-            # Compute scores for all validation samples
+            # Compute scores for all validation samples (batched for efficiency)
             scores_list = []
             with torch.no_grad():
-                for i in range(len(heads)):
-                    head = torch.LongTensor([heads[i]]).to(self.device)
-                    relation = torch.LongTensor([relations[i]]).to(self.device)
-                    tail = torch.LongTensor([tails[i]]).to(self.device)
+                for batch_head, batch_relation, batch_tail in batch_by_size(config._config.test_batch_size,
+                                                                           heads, relations, tails):
+                    head_var = torch.LongTensor(batch_head).to(self.device)
+                    relation_var = torch.LongTensor(batch_relation).to(self.device)
+                    tail_var = torch.LongTensor(batch_tail).to(self.device)
 
-                    score = self.get_score(head, relation, tail)
-                    scores_list.append(float(score.item()))
+                    batch_scores = self.model.score(head_var, relation_var, tail_var)
+                    batch_scores = batch_scores.detach().cpu().numpy()
+                    scores_list.extend(batch_scores.tolist())
 
             # Try different threshold values
-            min_score = min(scores_list)
-            max_score = max(scores_list)
+            scores_array = np.array(scores_list)
+            min_score = float(scores_array.min())
+            max_score = float(scores_array.max())
             threshold_values = np.linspace(min_score, max_score, n_thresholds)
 
             best_val = 0.0
@@ -248,12 +251,10 @@ class BaseModel(object):
             is_distance_based = self.model_type in ['TransE', 'TransD']
 
             for threshold in threshold_values:
-                predictions = []
-                for score in scores_list:
-                    if is_distance_based:
-                        predictions.append(1 if score < threshold else 0)
-                    else:
-                        predictions.append(1 if score > threshold else 0)
+                if is_distance_based:
+                    predictions = np.where(scores_array < threshold, 1, 0).tolist()
+                else:
+                    predictions = np.where(scores_array > threshold, 1, 0).tolist()
                 
                 metrics = classification_metrics(predictions, labels, scores=scores_list)
                 val_metric = metrics.get(optimizing_metric, 0.0)
@@ -299,12 +300,12 @@ class BaseModel(object):
         # determine whether smaller score means positive (distance-based models)
         is_distance_based = self.model_type in ['TransE', 'TransD']
 
-        predictions = []
-        for s in scores_list:
-            if is_distance_based:
-                predictions.append(1 if s < threshold else 0)
-            else:
-                predictions.append(1 if s > threshold else 0)
+        # Vectorized prediction generation
+        scores_array = np.array(scores_list)
+        if is_distance_based:
+            predictions = np.where(scores_array < threshold, 1, 0).tolist()
+        else:
+            predictions = np.where(scores_array > threshold, 1, 0).tolist()
 
         metrics = classification_metrics(predictions, true_labels, scores=scores_list)
         metrics_str = f"Classification metrics: {metrics}\n"

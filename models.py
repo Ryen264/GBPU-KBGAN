@@ -114,10 +114,20 @@ class TransE(BaseModel):
             logging.info('Epoch %d/%d, Loss=%f', epoch + 1, self.n_epoch, epoch_loss / n_train)
             if ((self.n_epoch >= self.epoch_per_test) and ((epoch + 1) % self.epoch_per_test == 0)):
                 metrics = tester()
-                test_perf = metrics['MRR']
+                # Support both link-prediction (MRR) and triple-classification (accuracy) metrics
+                if 'MRR' in metrics:
+                    test_perf = metrics['MRR']
+                    metric_name = 'MRR'
+                elif 'accuracy' in metrics:
+                    test_perf = metrics['accuracy']
+                    metric_name = 'accuracy'
+                else:
+                    test_perf = list(metrics.values())[0]  # fallback to first metric
+                    metric_name = list(metrics.keys())[0]
+                
                 if (test_perf > best_perf):
                     if is_save_model:
-                        print(f"Saving TransE at epoch {epoch + 1} with MRR {test_perf}.")
+                        print(f"Saving TransE at epoch {epoch + 1} with {metric_name} {test_perf}.")
                         self.model_path = self.save()
                         print(f"Saved TransE successfully to: {self.model_path}")
                     best_perf = test_perf
@@ -129,7 +139,8 @@ class TransE(BaseModel):
                     logging.info('Early stopping triggered at epoch %d (patience=%d)', epoch + 1, patience)
                     break
         if is_save_model:
-            print(f"Saving trained TransE with best MRR {best_perf}.")
+            metric_name = 'MRR' if 'MRR' in metrics else 'accuracy' if 'accuracy' in metrics else list(metrics.keys())[0]
+            print(f"Saving trained TransE with best {metric_name} {best_perf}.")
             self.model_path = self.save()
             print(f"Saved trained TransE successfully to: {self.model_path}")
             return best_perf, self.model_path
@@ -258,10 +269,20 @@ class TransD(BaseModel):
             logging.info('Epoch %d/%d, Loss=%f', epoch + 1, self.n_epoch, epoch_loss / n_train)
             if ((self.n_epoch >= self.epoch_per_test) and ((epoch + 1) % self.epoch_per_test == 0)):
                 metrics = tester()
-                test_perf = metrics['MRR']
+                # Support both link-prediction (MRR) and triple-classification (accuracy) metrics
+                if 'MRR' in metrics:
+                    test_perf = metrics['MRR']
+                    metric_name = 'MRR'
+                elif 'accuracy' in metrics:
+                    test_perf = metrics['accuracy']
+                    metric_name = 'accuracy'
+                else:
+                    test_perf = list(metrics.values())[0]  # fallback to first metric
+                    metric_name = list(metrics.keys())[0]
+                
                 if (test_perf > best_perf):
                     if is_save_model:
-                        print(f"Saving TransD at epoch {epoch + 1} with MRR {test_perf}.")
+                        print(f"Saving TransD at epoch {epoch + 1} with {metric_name} {test_perf}.")
                         self.model_path = self.save()
                         print(f"Saved TransD successfully to: {self.model_path}")
                     best_perf = test_perf
@@ -273,7 +294,8 @@ class TransD(BaseModel):
                     logging.info('Early stopping triggered at epoch %d', epoch + 1)
                     break
         if is_save_model:
-            print(f"Saving trained TransD with best MRR {best_perf}.")
+            metric_name = 'MRR' if 'MRR' in metrics else 'accuracy' if 'accuracy' in metrics else list(metrics.keys())[0]
+            print(f"Saving trained TransD with best {metric_name} {best_perf}.")
             self.model_path = self.save()
             print(f"Saved trained TransD successfully to: {self.model_path}")
             return best_perf, self.model_path
@@ -373,10 +395,20 @@ class DistMult(BaseModel):
             logging.info('Epoch %d/%d, Loss=%f', epoch + 1, self.n_epoch, epoch_loss / n_train)
             if ((self.n_epoch >= self.epoch_per_test) and ((epoch + 1) % self.epoch_per_test == 0)):
                 metrics = tester()
-                test_perf = metrics['MRR']
+                # Support both link-prediction (MRR) and triple-classification (accuracy) metrics
+                if 'MRR' in metrics:
+                    test_perf = metrics['MRR']
+                    metric_name = 'MRR'
+                elif 'accuracy' in metrics:
+                    test_perf = metrics['accuracy']
+                    metric_name = 'accuracy'
+                else:
+                    test_perf = list(metrics.values())[0]  # fallback to first metric
+                    metric_name = list(metrics.keys())[0]
+                
                 if (test_perf > best_perf):
                     if is_save_model:
-                        print(f"Saving DistMult at epoch {epoch + 1} with MRR {test_perf}.")
+                        print(f"Saving DistMult at epoch {epoch + 1} with {metric_name} {test_perf}.")
                         self.model_path = self.save()
                         print(f"Saved DistMult successfully to: {self.model_path}")
                     best_perf = test_perf
@@ -388,7 +420,8 @@ class DistMult(BaseModel):
                     logging.info('Early stopping triggered at epoch %d', epoch + 1)
                     break
         if is_save_model:
-            print(f"Saving trained DistMult with best MRR {best_perf}.")
+            metric_name = 'MRR' if 'MRR' in metrics else 'accuracy' if 'accuracy' in metrics else list(metrics.keys())[0]
+            print(f"Saving trained DistMult with best {metric_name} {best_perf}.")
             self.model_path = self.save()
             print(f"Saved trained DistMult successfully to: {self.model_path}")
             return best_perf, self.model_path
@@ -499,10 +532,20 @@ class ComplEx(BaseModel):
             logging.info('Epoch %d/%d, Loss=%f', epoch + 1, self.n_epoch, epoch_loss / n_train)
             if ((self.n_epoch >= self.epoch_per_test) and ((epoch + 1) % self.epoch_per_test == 0)):
                 metrics = tester()
-                test_perf = metrics['MRR']
+                # Support both link-prediction (MRR) and triple-classification (accuracy) metrics
+                if 'MRR' in metrics:
+                    test_perf = metrics['MRR']
+                    metric_name = 'MRR'
+                elif 'accuracy' in metrics:
+                    test_perf = metrics['accuracy']
+                    metric_name = 'accuracy'
+                else:
+                    test_perf = list(metrics.values())[0]  # fallback to first metric
+                    metric_name = list(metrics.keys())[0]
+                
                 if (test_perf > best_perf):
                     if is_save_model:
-                        print(f"Saving ComplEx at epoch {epoch + 1} with MRR {test_perf}.")
+                        print(f"Saving ComplEx at epoch {epoch + 1} with {metric_name} {test_perf}.")
                         model_path = self.save()
                         print(f"Saved ComplEx successfully to: {model_path}")
                     best_perf = test_perf
@@ -514,7 +557,8 @@ class ComplEx(BaseModel):
                     logging.info('Early stopping triggered at epoch %d', epoch + 1)
                     break
         if is_save_model:
-            print(f"Saving trained ComplEx with best MRR {best_perf}.")
+            metric_name = 'MRR' if 'MRR' in metrics else 'accuracy' if 'accuracy' in metrics else list(metrics.keys())[0]
+            print(f"Saving trained ComplEx with best {metric_name} {best_perf}.")
             self.model_path = self.save()
             print(f"Saved trained ComplEx successfully to: {self.model_path}")
             return best_perf, self.model_path
