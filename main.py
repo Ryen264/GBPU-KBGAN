@@ -29,12 +29,12 @@ def main():
         print("Running config:", _config)
 
     t_total = time.perf_counter()
-
-    _config.task = 'all'
     _config.dataset = 'wn18rr'
     # _config['KBGAN']['n_epoch'] = 200
     # _config[_config.d_config]['n_epoch'] = 100
     # _config[_config.g_config]['n_epoch'] = 100
+    # _config.task = 'all'
+
 
     # Init logging now that config is prepared
     logger_init()
