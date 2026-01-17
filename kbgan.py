@@ -256,6 +256,7 @@ class KBGAN():
         self.kbgan_path = self.discriminator.save()
         print(f"Saved KBGAN (discriminator) successfully to: {self.kbgan_path}")
         return self.kbgan_path
+        return self.kbgan_path
 
     def train_components(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data: tuple,
                 use_early_stopping: bool=False, patience: int=10, optimizer_name: str='Adam',
