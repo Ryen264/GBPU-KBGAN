@@ -8,6 +8,7 @@ from datasets import sparse_heads_tails, inplace_shuffle
 from kbgan import KBGAN
 
 MODE = 'full-train'  # full-train / gan-train / test-only
+K_LIST = [1, 3, 10]  # Default k values for ranking metrics
 
 # ./main.py mode=<mode> [other optional args to overwrite config]
 
@@ -35,13 +36,12 @@ def main():
     # _config[_config.g_config]['n_epoch'] = 100
     # _config.task = 'all'
 
-
     # Init logging now that config is prepared
     logger_init()
     t_step = time.perf_counter()
 
     # Load data
-    task_dir = './data/' + _config.dataset
+    task_dir = os.path.join('.', 'data', _config.dataset)
     kb_index = index_entity_relation(
         os.path.join(task_dir, 'train.txt'),
         os.path.join(task_dir, 'valid.txt'),
@@ -58,8 +58,8 @@ def main():
 
     # For task triple-classification, we need to read data with labels
     if _config.task == 'triple-classification' or _config.task == 'all':
-        valid_data_with_label   = read_data(os.path.join('./data/' + _config.dataset + '_w_labels', 'valid.txt'), kb_index, with_label=True)
-        test_data_with_label    = read_data(os.path.join('./data/' + _config.dataset + '_w_labels', 'test.txt'), kb_index, with_label=True)
+        valid_data_with_label   = read_data(os.path.join('.', 'data', _config.dataset + '_w_labels', 'valid.txt'), kb_index, with_label=True)
+        test_data_with_label    = read_data(os.path.join('.', 'data', _config.dataset + '_w_labels', 'test.txt'), kb_index, with_label=True)
         t_step = log_step("Labelled data load", t_step)
 
     # Convert to tensors
@@ -83,11 +83,11 @@ def main():
 
         # Test 2 components just be trained on link prediction
         dis_ranking_metrics = model.evaluate_discriminator_on_link_prediction(heads, tails, test_data,
-                                                                                filt=True, k_list=[1, 3, 10])
+                                                                                filt=True, k_list=K_LIST)
         print(f"Discriminator metrics on Link Prediction: {dis_ranking_metrics}")
 
         gen_ranking_metrics = model.evaluate_generator_on_link_prediction(heads, tails, test_data,
-                                                                            filt=True, k_list=[1, 3, 10])
+                                                                            filt=True, k_list=K_LIST)
         print(f"Generator metrics on Link Prediction: {gen_ranking_metrics}")
         t_step = log_step("Component link prediction eval", t_step)
         print("----------------")
@@ -113,7 +113,7 @@ def main():
         
         # Test KBGAN on link prediction
         link_prediction_metrics = model.evaluate_kbgan_on_link_prediction(heads, tails, test_data,
-                                                                          filt=True, k_list=[1, 3, 10])
+                                                                          filt=True, k_list=K_LIST)
         print(f"Link prediction metrics:\n{link_prediction_metrics}")
         t_step = log_step("KBGAN link prediction eval", t_step)
         print("----------------")
@@ -126,11 +126,11 @@ def main():
 
     elif MODE == 'gan-train':
         # Load 2 pretrained components
-        dis_model_path = './models/' + _config.dataset + '/' + _config.task + '/components/' + _config['d_config'] + '.mdl'
-        model.load_discriminator(component_path=dis_model_path)
+        dis_model_path = os.path.join('.', 'models', _config.dataset, _config.task, 'components', _config['d_config'] + '.mdl')
+        model.load_discriminator(dis_model_path)
 
-        gen_model_path = './models/' + _config.dataset + '/' + _config.task + '/components/' + _config['g_config'] + '.mdl'
-        model.load_generator(component_path=gen_model_path)
+        gen_model_path = os.path.join('.', 'models', _config.dataset, _config.task, 'components', _config['g_config'] + '.mdl')
+        model.load_generator(gen_model_path)
         print("----------------")
 
         # Train KBGAN
@@ -146,7 +146,7 @@ def main():
         # Test KBGAN on task
         if _config.task == 'link-prediction' or _config.task == 'all':
             link_prediction_metrics = model.evaluate_kbgan_on_link_prediction(heads, tails, test_data,
-                                                                              filt=True, k_list=[1, 3, 10])
+                                                                              filt=True, k_list=K_LIST)
             print(f"Link prediction metrics:\n{link_prediction_metrics}")
             t_step = log_step("KBGAN link prediction eval", t_step)
 
@@ -158,14 +158,14 @@ def main():
         
     elif MODE == 'test-only':
         # Load pretrained KBGAN
-        kbgan_path = './models/' + _config.dataset + '/' + _config.task + 'kbgan_' + 'dis-' + _config['d_config'] + '_gen-' + _config['g_config'] + '.mdl'
+        kbgan_path = os.path.join('.', 'models', _config.dataset, _config.task, 'kbgan_' + 'dis-' + _config['d_config'] + '_gen-' + _config['g_config'] + '.mdl')
         model.load_kbgan(kbgan_path)
         print("----------------")
 
         # Test KBGAN on task
         if _config.task == 'link-prediction' or _config.task == 'all':
             link_prediction_metrics = model.evaluate_kbgan_on_link_prediction(heads, tails, test_data,
-                                                                              filt=True, k_list=[1, 3, 10])
+                                                                              filt=True, k_list=K_LIST)
             print(f"Link prediction metrics:\n{link_prediction_metrics}")
 
         if _config.task == 'triple-classification' or _config.task == 'all':

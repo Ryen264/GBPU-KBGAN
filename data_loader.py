@@ -1,5 +1,6 @@
 from itertools import count
 from collections import namedtuple
+from typing import Union
 import logging
 
 KBIndex = namedtuple('KBIndex', ['entity_list', 'relation_list', 'entity_id', 'relation_id'])
@@ -9,8 +10,8 @@ def index_entity_relation(*filenames) -> KBIndex:
     relation_set = set()
     for filename in filenames:
         with open(filename) as f:
-            for ln in f:
-                s, r, t = ln.strip().split('\t')[:3]
+            for line in f:
+                s, r, t = line.strip().split('\t')[:3]
                 entity_set.add(s)
                 entity_set.add(t)
                 relation_set.add(r)
@@ -23,24 +24,18 @@ def index_entity_relation(*filenames) -> KBIndex:
 def graph_size(kb_index) -> tuple[int, int]:
     return len(kb_index.entity_id), len(kb_index.relation_id)
 
-def read_data(filename, kb_index, with_label=False) -> tuple[list[int], list[int], list[int]] | tuple[list[int], list[int], list[int], list[int]]:
+def read_data(filename, kb_index, with_label=False) -> Union[tuple[list[int], list[int], list[int]], tuple[list[int], list[int], list[int], list[int]]]:
     heads, relations, tails = [], [], []
     labels = []
     skipped_count = 0
     
     with open(filename) as f:
-        for ln in f:
-            parts = ln.strip().split('\t')
+        for line in f:
+            parts = line.strip().split('\t')
             h, r, t = parts[:3]
             
             # Check if entity and relation exist in kb_index
-            if h not in kb_index.entity_id:
-                skipped_count += 1
-                continue
-            if r not in kb_index.relation_id:
-                skipped_count += 1
-                continue
-            if t not in kb_index.entity_id:
+            if h not in kb_index.entity_id or r not in kb_index.relation_id or t not in kb_index.entity_id:
                 skipped_count += 1
                 continue
             

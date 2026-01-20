@@ -1,23 +1,20 @@
 from random import randint
 from collections import defaultdict
+from typing import Tuple, Dict
 import torch
 import numpy as np
 from numpy.random import choice
 
-def sparse_heads_tails(n_entity, train_data, valid_data=None, test_data=None) -> tuple[dict, dict]:
-    if train_data:
-        train_head, train_relation, train_tail = train_data
-    else:
-        train_head = train_relation = train_tail = []
-    if valid_data:
-        valid_head, valid_relation, valid_tail = valid_data
-    else:
-        valid_head = valid_relation = valid_tail = []
-        
-    if test_data:
-        test_head, test_relation, test_tail = test_data
-    else:
-        test_head = test_relation = test_tail = []
+def sparse_heads_tails(n_entity, train_data, valid_data=None, test_data=None) -> Tuple[Dict, Dict]:
+    def unpack_data(data):
+        """Helper to unpack data or return empty lists."""
+        if data:
+            return data
+        return [], [], []
+    
+    train_head, train_relation, train_tail = unpack_data(train_data)
+    valid_head, valid_relation, valid_tail = unpack_data(valid_data)
+    test_head, test_relation, test_tail = unpack_data(test_data)
         
     all_head = train_head + valid_head + test_head
     all_relation = train_relation + valid_relation + test_relation
@@ -29,7 +26,8 @@ def sparse_heads_tails(n_entity, train_data, valid_data=None, test_data=None) ->
         heads[(t, r)].add(h)
         tails[(h, r)].add(t)
     
-    heads_sparse = tails_sparse = {}
+    heads_sparse = {}
+    tails_sparse = {}
     for k in heads.keys():
         indices = torch.LongTensor([list(heads[k])])
         values = torch.ones(len(heads[k]))
@@ -46,8 +44,7 @@ def inplace_shuffle(*lists) -> None:
         idx.append(randint(0, i+1))
     for ls in lists:
         for i, item in enumerate(ls):
-            j = idx[i]
-            ls[i], ls[j] = ls[j], ls[i]
+            ls[i], ls[idx[i]] = ls[idx[i]], ls[i]
 
 def batch_by_num(n_batch, *lists, n_sample=None):
     if n_sample is None:
@@ -95,7 +92,7 @@ class BernCorrupter(object):
         self.bern_prob = get_bern_prob(data, n_relation)
         self.n_entity = n_entity
 
-    def corrupt(self, head, relation, tail) -> tuple[torch.Tensor, torch.Tensor]:
+    def corrupt(self, head, relation, tail) -> Tuple[torch.Tensor, torch.Tensor]:
         prob = self.bern_prob[relation]
         selection = torch.bernoulli(prob).numpy().astype('int64')
         entity_random = choice(self.n_entity, len(head))
@@ -109,7 +106,7 @@ class BernCorrupterMulti(object):
         self.n_entity = n_entity
         self.n_sample = n_sample
 
-    def corrupt(self, head, relation, tail, keep_truth=True) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def corrupt(self, head, relation, tail, keep_truth=True) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         n = len(head)
         prob = self.bern_prob[relation]
         selection = torch.bernoulli(prob).numpy().astype('bool')

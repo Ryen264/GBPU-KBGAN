@@ -3,7 +3,7 @@ import numpy as np
 import torch
 from typing import Dict, List, Union
 
-def ranking_metrics(scores, target, k_list=[1, 3, 10]) -> Dict[str, Union[int, float, List[int]]]:
+def ranking_metrics(scores, target, k_list=None) -> Dict[str, Union[int, float, List[int]]]:
     """
     Compute link prediction metrics (MR, MRR, Hits@K).
     
@@ -15,6 +15,8 @@ def ranking_metrics(scores, target, k_list=[1, 3, 10]) -> Dict[str, Union[int, f
     Returns:
         Dictionary with keys: 'mr', 'mrr', 'hits', 'target_score'
     """
+    if k_list is None:
+        k_list = [1, 3, 10]
     _, sorted_idx = torch.sort(scores)
     find_target = sorted_idx == target
 
@@ -44,7 +46,7 @@ def classification_metrics(predictions: list, true_labels: list, scores: list = 
     try:
         y_pred = np.asarray(predictions)
         y_true = np.asarray(true_labels)
-    except Exception as e:
+    except (ValueError, TypeError) as e:
         raise ValueError(f"Error converting inputs to numpy arrays: {e}")
     if y_pred.shape != y_true.shape:
         raise ValueError("Predictions and true labels must have the same shape.")
@@ -79,7 +81,7 @@ def classification_metrics(predictions: list, true_labels: list, scores: list = 
     roc_auc = 0.0
     if scores is not None:
         try:
-            from sklearn.metrics import auc, precision_recall_curve, roc_curve, roc_auc_score
+            from sklearn.metrics import auc, precision_recall_curve, roc_auc_score
             y_scores = np.asarray(scores)
             
             # ROC AUC
@@ -90,14 +92,14 @@ def classification_metrics(predictions: list, true_labels: list, scores: list = 
             pr_auc = auc(recall_curve, precision_curve)
         except ImportError:
             logging.warning("scikit-learn not available. PR AUC and ROC AUC set to 0.0")
-        except Exception as e:
+        except (ValueError, TypeError) as e:
             logging.warning(f"Error computing AUC metrics: {e}. PR AUC and ROC AUC set to 0.0")
     
     return {
-        'accuracy': accuracy,
-        'precision': precision,
-        'recall': recall,
-        'f1': f1_score,
-        'pr_auc': pr_auc,
-        'roc_auc': roc_auc
+        'accuracy': float(accuracy),
+        'precision': float(precision),
+        'recall': float(recall),
+        'f1': float(f1_score),
+        'pr_auc': float(pr_auc),
+        'roc_auc': float(roc_auc)
     }

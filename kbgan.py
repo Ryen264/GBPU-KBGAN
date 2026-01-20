@@ -4,7 +4,7 @@ import torch
 import torch.nn.functional as nnf
 from torch.autograd import Variable
 from torch.optim import Adam, SGD, AdamW, RMSprop, Adagrad
-from typing import Generator, Tuple
+from typing import Generator, Tuple, Optional
 
 from datasets import batch_by_num, BernCorrupterMulti, BernCorrupter
 from models import TransE, TransD, DistMult, ComplEx
@@ -30,7 +30,6 @@ class Component():
 
         self.n_entity = n_entity
         self.n_relation = n_relation
-        self.model_type = model_type
         self.model_path = None
 
         self.model_config = config._config[self.model_type]
@@ -64,7 +63,7 @@ class Component():
 
     def train(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data: tuple,
               use_early_stopping: bool=False, patience: int=10, optimizer_name: str='Adam',
-              is_save_model: bool=True) -> Tuple[float, str | None]:    
+              is_save_model: bool=True) -> Tuple[float, Optional[str]]:    
         config.overwrite_config_with_args(["--log.prefix=" + self.model_type + '_'])
         config.logger_init()
 
@@ -94,12 +93,16 @@ class Component():
             return best_perf, model_path
         return best_perf, None
     
-    def save(self) -> str:
+    def save(self, model_path: Optional[str] = None) -> str:
+        """Persist underlying model; allow overriding the destination path."""
+        if model_path is not None:
+            self.model_path = model_path
+
         if self.model_path is None:
             raise ValueError("Component must be fitted before being saved!")
-        
+
         print(f"Saving component: {self.model_type} model.")
-        self.model_path = self.model.save()
+        self.model_path = self.model.save(self.model_path)
         print(f"Saved component successfully by: {self.model_path}")
         return self.model_path
 
@@ -178,7 +181,9 @@ class Component():
         return losses.data, -fake_scores.data
 
     def evaluate_on_ranking(self, test_data: tuple, heads: torch.Tensor, tails: torch.Tensor,
-                            filt=True, k_list=[1, 3, 10]) -> dict:
+                            filt=True, k_list=None) -> dict:
+        if k_list is None:
+            k_list = [1, 3, 10]
         if not self.model.is_trained_or_loaded():
             raise ValueError("Component must be trained before being tested!")
         
@@ -216,7 +221,7 @@ class KBGAN():
         self.discriminator_path = None
         self.generator_path = None
 
-        task_dir = '.\\models\\' + config._config.dataset + '\\' + config._config.task
+        task_dir = os.path.join('.', 'models', config._config.dataset, config._config.task)
         os.makedirs(task_dir, exist_ok=True)
         model_name = 'kbgan_' + 'dis-' + self.discriminator_type + '_gen-' + self.generator_type + '.mdl'
         self.kbgan_path = os.path.join(task_dir, model_name)
@@ -244,30 +249,30 @@ class KBGAN():
         self.kbgan_path = kbgan_path
         print(f"Loaded KBGAN (discriminator) successfully by: {self.kbgan_path}")
 
-    def save_kbgan(self) -> str: 
+    def save_kbgan(self, save_path: Optional[str] = None) -> str:
+        """Save discriminator parameters to the KBGAN path."""
+        if save_path is not None:
+            self.kbgan_path = save_path
+
         if self.kbgan_path is None:
             # Construct path if not already set
-            task_dir = '.\\models\\' + config._config.dataset + '\\' + config._config.task
+            task_dir = os.path.join('.', 'models', config._config.dataset, config._config.task)
             os.makedirs(task_dir, exist_ok=True)
             model_name = 'kbgan_' + 'dis-' + self.discriminator_type + '_gen-' + self.generator_type + '.mdl'
             self.kbgan_path = os.path.join(task_dir, model_name)
-              
+
         print(f"Saving KBGAN (discriminator)...")
-        self.kbgan_path = self.discriminator.save()
+        self.kbgan_path = self.discriminator.save(self.kbgan_path)
         print(f"Saved KBGAN (discriminator) successfully to: {self.kbgan_path}")
-        return self.kbgan_path
         return self.kbgan_path
 
     def train_components(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data: tuple,
                 use_early_stopping: bool=False, patience: int=10, optimizer_name: str='Adam',
-                is_save_components: bool=True) -> Tuple[float, str | None, float, str | None]:        
+                is_save_components: bool=True) -> Tuple[float, Optional[str], float, Optional[str]]:        
         if not isinstance(train_data[0], torch.Tensor):
             train_data = [torch.LongTensor(vec) for vec in train_data]
         if not isinstance(valid_data[0], torch.Tensor):
             valid_data = [torch.LongTensor(vec) for vec in valid_data]
-        
-        config.overwrite_config_with_args(["--log.prefix=" + self.discriminator_type + '-' + self.generator_type + "_"])
-        config.logger_init()
 
         print(f"Training KBGAN's components: {self.generator_type} generator, {self.discriminator_type} discriminator.")
         print(f"Training discriminator...")
@@ -297,9 +302,6 @@ class KBGAN():
             train_data = [torch.LongTensor(vec) for vec in train_data]
         if not isinstance(valid_data[0], torch.Tensor):
             valid_data = [torch.LongTensor(vec) for vec in valid_data]
-        
-        config.overwrite_config_with_args(["--log.prefix=" + self.discriminator_type + '-' + self.generator_type + "_"])
-        config.logger_init()
 
         # Initialize optimizers according to optimizer_name for both models
         opt_map = {
@@ -311,9 +313,9 @@ class KBGAN():
         }
         opt_cls = opt_map.get(optimizer_name, Adam)
         try:
-            self.generator.model.opt = opt_cls(self.generator.model.parameters())
-            self.discriminator.model.opt = opt_cls(self.discriminator.model.parameters())
-        except Exception:
+            self.generator.model.opt = opt_cls(self.generator.model.model.parameters())
+            self.discriminator.model.opt = opt_cls(self.discriminator.model.model.parameters())
+        except (AttributeError, TypeError):
             pass
 
         corrupter = BernCorrupterMulti(train_data, self.n_entity, self.n_relation, self.n_sample)
@@ -358,7 +360,7 @@ class KBGAN():
                     if is_save_kbgan:
                         print(f"Saving KBGAN at epoch {epoch + 1} with MRR {best_perf}.")
                         self.kbgan_path = self.save_kbgan()
-                        print(f"Saved KBGAN successfully to: {self. kbgan_path}")
+                        print(f"Saved KBGAN successfully to: {self.kbgan_path}")
                     best_perf = perf
                     patience_counter = 0
                 else:
@@ -376,7 +378,9 @@ class KBGAN():
         return best_perf, None
 
     def evaluate_kbgan_on_link_prediction(self, heads: torch.Tensor, tails: torch.Tensor, test_data: tuple,
-                                        filt: bool=True, k_list: list=[1, 3, 10]) -> dict:
+                                        filt: bool=True, k_list=None) -> dict:
+        if k_list is None:
+            k_list = [1, 3, 10]
         if (not self.discriminator.model.is_trained_or_loaded()):
             raise ValueError("KBGAN (discriminator) must be trained before being tested!")
         
@@ -396,7 +400,9 @@ class KBGAN():
         return metrics
 
     def evaluate_discriminator_on_link_prediction(self, heads: torch.Tensor, tails: torch.Tensor, test_data: tuple,
-                                        filt: bool=True, k_list: list=[1, 3, 10]) -> dict:
+                                        filt: bool=True, k_list=None) -> dict:
+        if k_list is None:
+            k_list = [1, 3, 10]
         if (not self.discriminator.model.is_trained_or_loaded()):
             raise ValueError("Discriminator must be trained before being tested!")
     
@@ -408,7 +414,9 @@ class KBGAN():
         return metrics
     
     def evaluate_generator_on_link_prediction(self, heads: torch.Tensor, tails: torch.Tensor, test_data: tuple,
-                                        filt: bool=True, k_list: list=[1, 3, 10]) -> dict:
+                                        filt: bool=True, k_list=None) -> dict:
+        if k_list is None:
+            k_list = [1, 3, 10]
         if (not self.generator.model.is_trained_or_loaded()):
             raise ValueError("Generator must be trained before being tested!")
         

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as nnf
 from torch.optim import Adam
-from typing import Tuple
+from typing import Tuple, Optional
 import logging
 import os
 import numpy as np
@@ -72,7 +72,7 @@ class BaseModel(object):
         self.weight_decay = 0
         self._set_device(use_gpu)
 
-        self.task_dir = '.\\models\\' + config._config.dataset + '\\' + config._config.task + '\\components'
+        self.task_dir = os.path.join('.', 'models', config._config.dataset, config._config.task, 'components')
         os.makedirs(self.task_dir, exist_ok=True)
 
     def _set_device(self, use_gpu: bool = None) -> None:
@@ -81,7 +81,7 @@ class BaseModel(object):
             # use device selected by config module
             try:
                 self.device = config.device
-            except Exception:
+            except AttributeError:
                 self.device = torch.device('cpu')
         elif use_gpu:
             if torch.cuda.is_available():
@@ -91,13 +91,11 @@ class BaseModel(object):
                     self.device = torch.device(f"cuda:{gpu_id}")
                 else:
                     self.device = torch.device('cuda')
-                logging.info('Using device %s', self.device)
             else:
                 logging.warning('Requested GPU but CUDA is not available. Falling back to CPU.')
                 self.device = torch.device('cpu')
         else:
             self.device = torch.device('cpu')
-            logging.info('Using device %s', self.device)
 
     def load(self, model_path) -> None:
         pass
@@ -107,11 +105,20 @@ class BaseModel(object):
               use_gpu: bool = None, is_save_model: bool = True) -> Tuple[float, str]:
         pass
 
-    def save(self) -> str:
+    def save(self, save_path: Optional[str] = None) -> str:
+        # Allow caller to override path at save time
+        if save_path is not None:
+            self.model_path = save_path
+
         if self.model_path is None:
             raise ValueError("Model path is not set. Cannot save model.")
-        
-        try: 
+
+        # Ensure destination directory exists
+        dir_name = os.path.dirname(self.model_path)
+        if dir_name:
+            os.makedirs(dir_name, exist_ok=True)
+
+        try:
             torch.save(self.model.state_dict(), self.model_path)
         except Exception as e:
             logging.error(f"Error saving model: {e}")
@@ -130,6 +137,10 @@ class BaseModel(object):
     def is_trained_or_loaded(self) -> bool:
         return self.model is not None
     
+    def _is_distance_based(self) -> bool:
+        """Check if model is distance-based (lower score is better)."""
+        return self.model_type in ['TransE', 'TransD']
+    
     def get_score(self, head, relation, tail) -> torch.Tensor:
         return self.model.score(head, relation, tail)
     
@@ -139,8 +150,9 @@ class BaseModel(object):
     def get_pair_loss(self, head, relation, tail, head_bad, tail_bad) -> torch.Tensor:
         return self.model.pair_loss(head, relation, tail, head_bad, tail_bad)
     
-    def evaluate_on_ranking(self, test_data, n_entity, heads, tails, filt=True, k_list=[1, 3, 10]) -> dict:
-        mr_total = mrr_total = 0.0
+    def evaluate_on_ranking(self, test_data, n_entity, heads, tails, filt=True, k_list=None) -> dict:
+        if k_list is None:
+            k_list = [1, 3, 10]
         mr_total = mrr_total = 0.0
         hits_total = [0] * len(k_list)
         test_data_no_label = test_data[:3]
@@ -248,7 +260,7 @@ class BaseModel(object):
             best_threshold = 0.0
 
             # Determine if model is distance-based or similarity-based
-            is_distance_based = self.model_type in ['TransE', 'TransD']
+            is_distance_based = self._is_distance_based()
 
             for threshold in threshold_values:
                 if is_distance_based:
@@ -263,7 +275,7 @@ class BaseModel(object):
                     best_val = val_metric
                     best_threshold = threshold
 
-            logging.info(f"Optimal threshold: {best_threshold:.4f} (metrics['{optimizing_metric}']={best_val:.4f})")
+            logging.info(f"Optimal threshold: {best_threshold:.4f} ({optimizing_metric}={best_val:.4f})")
             return best_threshold
 
 
@@ -298,7 +310,7 @@ class BaseModel(object):
         )
 
         # determine whether smaller score means positive (distance-based models)
-        is_distance_based = self.model_type in ['TransE', 'TransD']
+        is_distance_based = self._is_distance_based()
 
         # Vectorized prediction generation
         scores_array = np.array(scores_list)
@@ -307,7 +319,12 @@ class BaseModel(object):
         else:
             predictions = np.where(scores_array > threshold, 1, 0).tolist()
 
-        metrics = classification_metrics(predictions, true_labels, scores=scores_list)
-        metrics_str = f"Classification metrics: {metrics}\n"
+        # For distance-based models lower scores mean better; invert for AUC so higher is better
+        scores_for_auc = [-s for s in scores_list] if is_distance_based else scores_list
+
+        metrics = classification_metrics(predictions, true_labels, scores=scores_for_auc)
+        # Format metrics for cleaner output
+        metrics_display = {k: f"{v:.4f}" if isinstance(v, float) else v for k, v in metrics.items()}
+        metrics_str = f"Classification metrics: {metrics_display}\n"
         logging.info(metrics_str)
         return metrics

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from torch.optim import Adam, SGD, AdamW, RMSprop, Adagrad
 from torch.autograd import Variable
-from typing import Tuple
+from typing import Tuple, Optional
 import logging
 import os
 import numpy as np
@@ -66,12 +66,12 @@ class TransE(BaseModel):
             state_dict = torch.load(model_path, map_location=self.device, weights_only=True)
             self.model.load_state_dict(state_dict)
             self.model_path = model_path
-        except Exception as e:
+        except (FileNotFoundError, RuntimeError) as e:
             logging.error(f"Error loading model: {e}")
 
     def train(self, train_data, corrupter, tester,
               use_early_stopping=False, patience=10, optimizer_name='Adam',
-              use_gpu: bool = None, is_save_model: bool = True) -> Tuple[float, str | None]:
+              use_gpu: bool = None, is_save_model: bool = True) -> Tuple[float, Optional[str]]:
         if use_gpu is not None:
             self._set_device(use_gpu)
 
@@ -96,13 +96,13 @@ class TransE(BaseModel):
             tail = tail[rand_idx]
 
             head_corrupted, tail_corrupted = corrupter.corrupt(head, relation, tail)
-            head_cuda = head.to(self.device)
-            relation_cuda = relation.to(self.device)
-            tail_cuda = tail.to(self.device)
+            head_device = head.to(self.device)
+            relation_device = relation.to(self.device)
+            tail_device = tail.to(self.device)
             head_corrupted = head_corrupted.to(self.device)
             tail_corrupted = tail_corrupted.to(self.device)
             epoch_loss = 0
-            for h0, r, t0, h1, t1 in batch_by_num(self.n_batch, head_cuda, relation_cuda, tail_cuda,
+            for h0, r, t0, h1, t1 in batch_by_num(self.n_batch, head_device, relation_device, tail_device,
                                                   head_corrupted, tail_corrupted, n_sample=n_train):
                 self.zero_grad()
                 loss = torch.sum(self.model.pair_loss(Variable(h0), Variable(r), Variable(t0), Variable(h1), Variable(t1)))
@@ -127,9 +127,9 @@ class TransE(BaseModel):
                 
                 if (test_perf > best_perf):
                     if is_save_model:
-                        print(f"Saving TransE at epoch {epoch + 1} with {metric_name} {test_perf}.")
+                        print(f"[CHECKPOINT] Saving TransE at epoch {epoch + 1} with {metric_name} {test_perf}.")
                         self.model_path = self.save()
-                        print(f"Saved TransE successfully to: {self.model_path}")
+                        print(f"[CHECKPOINT] Saved TransE successfully to: {self.model_path}")
                     best_perf = test_perf
                     patience_counter = 0
                 else:
@@ -140,9 +140,9 @@ class TransE(BaseModel):
                     break
         if is_save_model:
             metric_name = 'MRR' if 'MRR' in metrics else 'accuracy' if 'accuracy' in metrics else list(metrics.keys())[0]
-            print(f"Saving trained TransE with best {metric_name} {best_perf}.")
+            print(f"[FINAL] Saving trained TransE with best {metric_name} {best_perf}.")
             self.model_path = self.save()
-            print(f"Saved trained TransE successfully to: {self.model_path}")
+            print(f"[FINAL] Saved trained TransE successfully to: {self.model_path}")
             return best_perf, self.model_path
         return best_perf, None
     
@@ -180,7 +180,7 @@ class TransDModule(BaseModule):
         return self.forward(head, relation, tail)
 
     def prob_logit(self, head, relation, tail) -> torch.Tensor:
-        return -self.forward(head, relation ,tail) / self.temp
+        return -self.forward(head, relation, tail) / self.temp
 
     def constraint(self) -> None:
         for param in self.parameters():
@@ -220,12 +220,12 @@ class TransD(BaseModel):
             state_dict = torch.load(model_path, map_location=self.device, weights_only=True)
             self.model.load_state_dict(state_dict)
             self.model_path = model_path
-        except Exception as e:
+        except (FileNotFoundError, RuntimeError) as e:
             logging.error(f"Error loading model: {e}")
 
     def train(self, train_data, corrupter, tester,
               use_early_stopping=False, patience=10, optimizer_name='Adam',
-              use_gpu: bool = None, is_save_model: bool = True) -> Tuple[float, str | None]:
+              use_gpu: bool = None, is_save_model: bool = True) -> Tuple[float, Optional[str]]:
         if use_gpu is not None:
             self._set_device(use_gpu)
         
@@ -282,9 +282,9 @@ class TransD(BaseModel):
                 
                 if (test_perf > best_perf):
                     if is_save_model:
-                        print(f"Saving TransD at epoch {epoch + 1} with {metric_name} {test_perf}.")
+                        print(f"[CHECKPOINT] Saving TransD at epoch {epoch + 1} with {metric_name} {test_perf}.")
                         self.model_path = self.save()
-                        print(f"Saved TransD successfully to: {self.model_path}")
+                        print(f"[CHECKPOINT] Saved TransD successfully to: {self.model_path}")
                     best_perf = test_perf
                     patience_counter = 0
                 else:
@@ -295,9 +295,9 @@ class TransD(BaseModel):
                     break
         if is_save_model:
             metric_name = 'MRR' if 'MRR' in metrics else 'accuracy' if 'accuracy' in metrics else list(metrics.keys())[0]
-            print(f"Saving trained TransD with best {metric_name} {best_perf}.")
+            print(f"[FINAL] Saving trained TransD with best {metric_name} {best_perf}.")
             self.model_path = self.save()
-            print(f"Saved trained TransD successfully to: {self.model_path}")
+            print(f"[FINAL] Saved trained TransD successfully to: {self.model_path}")
             return best_perf, self.model_path
         return best_perf, None
     
@@ -348,12 +348,12 @@ class DistMult(BaseModel):
             state_dict = torch.load(model_path, map_location=self.device, weights_only=True)
             self.model.load_state_dict(state_dict)
             self.model_path = model_path
-        except Exception as e:
+        except (FileNotFoundError, RuntimeError) as e:
             logging.error(f"Error loading model: {e}")
 
     def train(self, train_data, corrupter, tester,
               use_early_stopping=False, patience=10, optimizer_name='Adam',
-              use_gpu: bool = None, is_save_model: bool = True) -> Tuple[float, str | None]:
+              use_gpu: bool = None, is_save_model: bool = True) -> Tuple[float, Optional[str]]:
         if use_gpu is not None:
             self._set_device(use_gpu)
 
@@ -408,9 +408,9 @@ class DistMult(BaseModel):
                 
                 if (test_perf > best_perf):
                     if is_save_model:
-                        print(f"Saving DistMult at epoch {epoch + 1} with {metric_name} {test_perf}.")
+                        print(f"[CHECKPOINT] Saving DistMult at epoch {epoch + 1} with {metric_name} {test_perf}.")
                         self.model_path = self.save()
-                        print(f"Saved DistMult successfully to: {self.model_path}")
+                        print(f"[CHECKPOINT] Saved DistMult successfully to: {self.model_path}")
                     best_perf = test_perf
                     patience_counter = 0
                 else:
@@ -421,9 +421,9 @@ class DistMult(BaseModel):
                     break
         if is_save_model:
             metric_name = 'MRR' if 'MRR' in metrics else 'accuracy' if 'accuracy' in metrics else list(metrics.keys())[0]
-            print(f"Saving trained DistMult with best {metric_name} {best_perf}.")
+            print(f"[FINAL] Saving trained DistMult with best {metric_name} {best_perf}.")
             self.model_path = self.save()
-            print(f"Saved trained DistMult successfully to: {self.model_path}")
+            print(f"[FINAL] Saved trained DistMult successfully to: {self.model_path}")
             return best_perf, self.model_path
         return best_perf, None
 
@@ -483,12 +483,12 @@ class ComplEx(BaseModel):
             state_dict = torch.load(model_path, map_location=self.device, weights_only=True)
             self.model.load_state_dict(state_dict)
             self.model_path = model_path
-        except Exception as e:
+        except (FileNotFoundError, RuntimeError) as e:
             logging.error(f"Error loading model: {e}")
 
     def train(self, train_data, corrupter, tester,
               use_early_stopping=False, patience=10, optimizer_name='Adam',
-              use_gpu: bool = None, is_save_model: bool = True) -> Tuple[float, str | None]:
+              use_gpu: bool = None, is_save_model: bool = True) -> Tuple[float, Optional[str]]:
         if use_gpu is not None:
             self._set_device(use_gpu)
 
@@ -545,9 +545,9 @@ class ComplEx(BaseModel):
                 
                 if (test_perf > best_perf):
                     if is_save_model:
-                        print(f"Saving ComplEx at epoch {epoch + 1} with {metric_name} {test_perf}.")
-                        model_path = self.save()
-                        print(f"Saved ComplEx successfully to: {model_path}")
+                        print(f"[CHECKPOINT] Saving ComplEx at epoch {epoch + 1} with {metric_name} {test_perf}.")
+                        self.model_path = self.save()
+                        print(f"[CHECKPOINT] Saved ComplEx successfully to: {self.model_path}")
                     best_perf = test_perf
                     patience_counter = 0
                 else:
@@ -558,8 +558,8 @@ class ComplEx(BaseModel):
                     break
         if is_save_model:
             metric_name = 'MRR' if 'MRR' in metrics else 'accuracy' if 'accuracy' in metrics else list(metrics.keys())[0]
-            print(f"Saving trained ComplEx with best {metric_name} {best_perf}.")
+            print(f"[FINAL] Saving trained ComplEx with best {metric_name} {best_perf}.")
             self.model_path = self.save()
-            print(f"Saved trained ComplEx successfully to: {self.model_path}")
+            print(f"[FINAL] Saved trained ComplEx successfully to: {self.model_path}")
             return best_perf, self.model_path
         return best_perf, None

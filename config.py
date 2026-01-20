@@ -86,8 +86,8 @@ def select_gpu():
         nvidia_info = subprocess.run(
             ['nvidia-smi'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True
         )
-    except FileNotFoundError:
-        logging.warning("nvidia-smi not found. Running on CPU.")
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        logging.warning("nvidia-smi not found or failed. Running on CPU.")
         return None
 
     gpu_info = False
@@ -135,16 +135,15 @@ def select_gpu():
 
 def logger_init():
     root_logger = logging.getLogger()
-    root_logger.handlers.clear()    # Xoá các handler mặc định của Jupyter
-    root_logger.setLevel(logging.DEBUG) # Hiện cả DEBUG, INFO...
+    root_logger.handlers.clear()
+    root_logger.setLevel(logging.DEBUG)
 
-    # Hiện log ra output của cell
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(logging.Formatter('%(module)15s %(asctime)s %(message)s', datefmt='%H:%M:%S'))
     root_logger.addHandler(console_handler)
 
     if (config().log.to_file):
-        log_dir = './logs/' + config().dataset + '/' + config().task
+        log_dir = os.path.join('.', 'logs', config().dataset, config().task)
         os.makedirs(log_dir, exist_ok=True)
         log_filename = os.path.join(
             log_dir,
@@ -162,7 +161,7 @@ device = None
 if gpu_id is not None and torch.cuda.is_available():
     torch.cuda.set_device(gpu_id)
     device = torch.device(f"cuda:{gpu_id}")
-    print(f"Using GPU: {device}")
+    logging.info(f"Using GPU: {device}")
 else:
     device = torch.device("cpu")
-    print("No GPU available. Running on CPU.")
+    logging.info("No GPU available. Running on CPU.")
