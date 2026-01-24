@@ -12,8 +12,8 @@ KBGAN:
   temperature: 1.0
   patience: 10
   optimizer_name: Adagrad
-  early_stopping_pretrain: true
-  early_stopping_train: true
+  early_stopping_pretrain: false
+  early_stopping_train: false
 TransE:
   dim: 50
   margin: 3

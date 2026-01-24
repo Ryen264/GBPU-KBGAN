@@ -303,20 +303,23 @@ class KBGAN():
         if not isinstance(valid_data[0], torch.Tensor):
             valid_data = [torch.LongTensor(vec) for vec in valid_data]
 
+        # log_vars[0] for Ranking, log_vars[1] for Classification
+        # Initializing at 0 means initial weight sigma=1
+        self.log_vars = torch.nn.Parameter(torch.zeros(2, requires_grad=True, device=self.discriminator.model.device)) # Ensure device matches model
+
         # Initialize optimizers according to optimizer_name for both models
-        opt_map = {
-            'Adam': Adam,
-            'SGD': SGD,
-            'AdamW': AdamW,
-            'RMSprop': RMSprop,
-            'Adagrad': Adagrad,
-        }
+        opt_map = {'Adam': Adam, 'SGD': SGD, 'AdamW': AdamW, 'RMSprop': RMSprop, 'Adagrad': Adagrad}
         opt_cls = opt_map.get(optimizer_name, Adam)
         try:
             self.generator.model.opt = opt_cls(self.generator.model.model.parameters())
-            self.discriminator.model.opt = opt_cls(self.discriminator.model.model.parameters())
+            
+            # The discriminator now learns the embeddings AND the optimal task weights
+            self.discriminator.model.opt = opt_cls(list(self.discriminator.model.model.parameters()) + [self.log_vars])
         except (AttributeError, TypeError):
             pass
+
+        # Define Classification Loss function
+        bce_criterion = torch.nn.BCELoss()
 
         corrupter = BernCorrupterMulti(train_data, self.n_entity, self.n_relation, self.n_sample)
         head, relation, tail = train_data
@@ -333,12 +336,60 @@ class KBGAN():
 
             head_cand, relation_cand, tail_cand = corrupter.corrupt(head, relation, tail, keep_truth=False)
             for h, r, t, hs, rs, ts in batch_by_num(self.n_batch, head, relation, tail, head_cand, relation_cand, tail_cand, n_sample=n_train):
+                # Move tensors to device
+                h = h.to(self.discriminator.model.device)
+                r = r.to(self.discriminator.model.device)
+                t = t.to(self.discriminator.model.device)
+                
+                # --- Generator Step ---
                 gen_step = self.generator.generator_step(hs, rs, ts, temperature=self.temperature)
                 head_smpl, tail_smpl = next(gen_step)
                 
-                losses, rewards = self.discriminator.discriminator_step(h, r, t, head_fake=head_smpl.squeeze(), tail_fake=tail_smpl.squeeze())
-                epoch_reward += torch.sum(rewards)
+                # --- Discriminator Step ---
+                # 1. Get Ranking Loss (and rewards for Generator)
+                loss_rank, rewards = self.discriminator.discriminator_step(h, r, t, head_fake=head_smpl.squeeze(), tail_fake=tail_smpl.squeeze(), train=True)
 
+                # 2. Get Classification Loss (BCE)
+                # We need raw scores from the discriminator to compute BCE.
+                pos_scores = self.discriminator.model.model(h, r, t)
+                neg_scores = self.discriminator.model.model(head_smpl.squeeze().to(self.discriminator.model.device), r, tail_smpl.squeeze().to(self.discriminator.model.device))
+                
+                # Normalize scores to [0, 1] using sigmoid and clamp to avoid numerical issues
+                pos_scores_norm = torch.clamp(torch.sigmoid(pos_scores), min=1e-6, max=1.0-1e-6).float()
+                neg_scores_norm = torch.clamp(torch.sigmoid(neg_scores), min=1e-6, max=1.0-1e-6).float()
+                
+                # Target: 1 for Real, 0 for Fake
+                target_pos = torch.ones_like(pos_scores_norm, dtype=torch.float32)
+                target_neg = torch.zeros_like(neg_scores_norm, dtype=torch.float32)
+                
+                loss_class = bce_criterion(pos_scores_norm, target_pos) + bce_criterion(neg_scores_norm, target_neg)
+
+                # Formula: L_total = exp(-s1)*L1 + s1 + exp(-s2)*L2 + s2
+                # Reduce loss_rank to scalar
+                loss_rank_scalar = torch.mean(loss_rank)
+                
+                precision_rank = torch.exp(-self.log_vars[0])
+                loss_rank_weighted = precision_rank * loss_rank_scalar + self.log_vars[0]
+                
+                precision_class = torch.exp(-self.log_vars[1])
+                loss_class_weighted = precision_class * loss_class + self.log_vars[1]
+                
+                # Weight ranking loss more heavily (5x) to focus on link prediction task
+                total_loss = 5.0 * loss_rank_weighted + loss_class_weighted
+
+                # Optimizer Step
+                self.discriminator.model.opt.zero_grad()
+                total_loss.backward()
+                self.discriminator.model.opt.step()
+
+                # Apply entity embedding constraints (e.g. norm <= 1)
+                self.discriminator.model.model.constraint()
+
+                # Update Metrics
+                epoch_reward += torch.sum(rewards)
+                epoch_d_loss += total_loss.item() # Logging the combined loss
+
+                # Update Generator
                 rewards = rewards - avg_reward
 
                 # Update generator with rewards
@@ -346,12 +397,13 @@ class KBGAN():
                     gen_step.send(rewards.unsqueeze(1))
                 except StopIteration:
                     pass
-                epoch_d_loss += torch.sum(losses)
                 
             avg_loss = epoch_d_loss / n_train
             avg_reward = epoch_reward / n_train
 
-            logging.info('Epoch %d/%d, D_loss=%f, reward=%f', epoch + 1, self.n_epoch, avg_loss, avg_reward)
+            logging.info('Epoch %d/%d, Joint_Loss=%f, Rank_W=%f, Class_W=%f', 
+                        epoch + 1, self.n_epoch, avg_loss, 
+                        self.log_vars[0].item(), self.log_vars[1].item())
 
             if (epoch + 1) % config._config.KBGAN.epoch_per_test == 0:
                 metrics = self.discriminator.model.evaluate_on_ranking(valid_data, self.n_entity, heads, tails, filt=True)
@@ -369,6 +421,7 @@ class KBGAN():
                 if use_early_stopping and patience_counter >= patience:
                     logging.info('Early stopping triggered at epoch %d (patience=%d)', epoch + 1, patience)
                     break
+
         print(f'Trained KBGAN successfully: {self.generator_type} generator, {self.discriminator_type} discriminator.')
         if is_save_kbgan:
             print(f"Saving trained KBGAN (discriminator) with best MRR {best_perf}.")
