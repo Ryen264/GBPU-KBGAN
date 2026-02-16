@@ -44,7 +44,7 @@ class BaseModule(nn.Module):
     def pair_loss(self, head, relation, tail, head_bad, tail_bad) -> torch.Tensor:
         d_good = self.dist(head, relation, tail)
         d_bad = self.dist(head_bad, relation, tail_bad)
-        return nnf.relu(self.margin + d_good - d_bad)
+        return nnf.relu(d_good - d_bad + self.margin)
 
     def softmax_loss(self, head, relation, tail, truth) -> torch.Tensor:
         probs = self.prob(head, relation, tail)
@@ -208,10 +208,10 @@ class BaseModel(object):
         hits_rate = [hit_total / count for hit_total in hits_total]
         
         metrics = {}
-        metrics['MR'] = mr_rate
-        metrics['MRR'] = mrr_rate
+        metrics['mr'] = mr_rate
+        metrics['mrr'] = mrr_rate
         for i in range(len(k_list)):
-            metrics[f'Hit@{k_list[i]}'] = hits_rate[i]
+            metrics[f'hit@{k_list[i]}'] = hits_rate[i]
 
         metrics_str = f"Ranking metrics: {metrics}\n"
         logging.info(metrics_str)
@@ -277,7 +277,6 @@ class BaseModel(object):
 
             logging.info(f"Optimal threshold: {best_threshold:.4f} ({optimizing_metric}={best_val:.4f})")
             return best_threshold
-
 
         if len(test_data) < 4:
             raise ValueError("For classification metrics, test_data must include labels as the 4th element (heads, relations, tails, labels).")

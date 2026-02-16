@@ -74,6 +74,7 @@ def main():
     if MODE == 'full-train':
         # Train 2 components
         dis_best_perf, dis_path, gen_best_perf, gen_path = model.train_components(heads, tails, train_data, valid_data_with_label,
+                                                                                    rank_class_balance=_config['KBGAN']['rank_class_balance'],
                                                                                     use_early_stopping=_config['KBGAN']['early_stopping_pretrain'],
                                                                                     patience=_config['KBGAN']['patience'],
                                                                                     optimizer_name=_config['KBGAN']['optimizer_name'],
@@ -102,7 +103,8 @@ def main():
         print("----------------")
 #
         # Train KBGAN
-        best_perf, kbgan_path = model.train_kbgan(heads, tails, train_data, valid_data,
+        best_perf, kbgan_path = model.train_kbgan(heads, tails, train_data, valid_data_with_label,
+                                                    rank_class_balance=_config['KBGAN']['rank_class_balance'],
                                                     use_early_stopping=_config['KBGAN']['early_stopping_train'],
                                                     patience=_config['KBGAN']['patience'],
                                                     optimizer_name=_config['KBGAN']['optimizer_name'],
@@ -134,7 +136,8 @@ def main():
         print("----------------")
 
         # Train KBGAN
-        best_perf, kbgan_path = model.train_kbgan(heads, tails, train_data, valid_data,
+        best_perf, kbgan_path = model.train_kbgan(heads, tails, train_data, valid_data_with_label,
+                                                    rank_class_balance=_config['KBGAN']['rank_class_balance'],
                                                     use_early_stopping=_config['KBGAN']['early_stopping_train'],
                                                     patience=_config['KBGAN']['patience'],
                                                     optimizer_name=_config['KBGAN']['optimizer_name'],

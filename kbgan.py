@@ -47,7 +47,7 @@ class Component():
     def load(self, model_path: str) -> None:
         if (self.n_entity is None or self.n_relation is None):
             raise ValueError("Component must be fitted before being loaded!")
-    
+
         print(f"Loading component by path: {model_path}")
         if self.model_type == "TransE":
             self.model = TransE(self.n_entity, self.n_relation, self.model_config)
@@ -62,8 +62,8 @@ class Component():
         print(f"Loaded component successfully by: {self.model_path}")
 
     def train(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data: tuple,
-              use_early_stopping: bool=False, patience: int=10, optimizer_name: str='Adam',
-              is_save_model: bool=True) -> Tuple[float, Optional[str]]:    
+              rank_class_balance: float = 5.0, use_early_stopping: bool=False, patience: int=10,
+              optimizer_name: str='Adam', is_save_model: bool=True) -> Tuple[float, Optional[str]]:    
         config.overwrite_config_with_args(["--log.prefix=" + self.model_type + '_'])
         config.logger_init()
 
@@ -75,12 +75,10 @@ class Component():
         else:
             raise ValueError(f"Unsupported model type: {self.model_type}")
 
-        if config._config.task == 'triple-classification' or config._config.task == 'all':
-            tester = lambda: self.model.evaluate_on_classification(valid_data, optimizing_metric='accuracy')
-        elif config._config.task == 'link-prediction' or config._config.task == 'all':
-            tester = lambda: self.model.evaluate_on_ranking(valid_data, self.n_entity, heads, tails, filt=True, k_list=[1, 3, 10])
-        else:
-            raise ValueError(f"Unsupported task: {config._config.task}")
+        class_metrics = lambda: self.model.evaluate_on_classification(valid_data, optimizing_metric='accuracy')
+        rank_metrics = lambda: self.model.evaluate_on_ranking(valid_data, self.n_entity, heads, tails, filt=True, k_list=[1, 3, 10])
+        tester = lambda: (rank_class_balance * rank_metrics()['mrr'] + class_metrics()['accuracy']) / (rank_class_balance + 1)
+
         use_gpu = (config.device.type == 'cuda')
 
         print(f'Training component: {self.model_type} model.')
@@ -253,7 +251,6 @@ class KBGAN():
         """Save discriminator parameters to the KBGAN path."""
         if save_path is not None:
             self.kbgan_path = save_path
-
         if self.kbgan_path is None:
             # Construct path if not already set
             task_dir = os.path.join('.', 'models', config._config.dataset, config._config.task)
@@ -266,42 +263,41 @@ class KBGAN():
         print(f"Saved KBGAN (discriminator) successfully to: {self.kbgan_path}")
         return self.kbgan_path
 
-    def train_components(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data: tuple,
-                use_early_stopping: bool=False, patience: int=10, optimizer_name: str='Adam',
-                is_save_components: bool=True) -> Tuple[float, Optional[str], float, Optional[str]]:        
+    def train_components(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data_w_label: tuple,
+                rank_class_balance: float=5.0, use_early_stopping: bool=False, patience: int=10,
+                optimizer_name: str='Adam', is_save_components: bool=True) -> Tuple[float, Optional[str], float, Optional[str]]:        
         if not isinstance(train_data[0], torch.Tensor):
             train_data = [torch.LongTensor(vec) for vec in train_data]
-        if not isinstance(valid_data[0], torch.Tensor):
-            valid_data = [torch.LongTensor(vec) for vec in valid_data]
+        if not isinstance(valid_data_w_label[0], torch.Tensor):
+            valid_data_w_label = [torch.LongTensor(vec) for vec in valid_data_w_label]
 
         print(f"Training KBGAN's components: {self.generator_type} generator, {self.discriminator_type} discriminator.")
         print(f"Training discriminator...")
-        best_perf_d, path_d = self.discriminator.train(heads, tails, train_data, valid_data,
-                                                    use_early_stopping=use_early_stopping, patience=patience, optimizer_name=optimizer_name,
-                                                    is_save_model=is_save_components)
+        best_perf_d, path_d = self.discriminator.train(heads, tails, train_data, valid_data_w_label,
+                                                    rank_class_balance, use_early_stopping=use_early_stopping, patience=patience,
+                                                    optimizer_name=optimizer_name, is_save_model=is_save_components)
         if is_save_components and path_d is not None:
             self.discriminator_path = path_d
             print(f"Trained discriminator is saved to: {path_d}")
 
         print(f"Training generator...")
-        best_perf_g, path_g = self.generator.train(heads, tails, train_data, valid_data,
-                                                    use_early_stopping=use_early_stopping, patience=patience, optimizer_name=optimizer_name,
-                                                    is_save_model=is_save_components)
+        best_perf_g, path_g = self.generator.train(heads, tails, train_data, valid_data_w_label,
+                                                    rank_class_balance, use_early_stopping=use_early_stopping, patience=patience,
+                                                    optimizer_name=optimizer_name, is_save_model=is_save_components)
         if is_save_components and path_g is not None:
             self.generator_path = path_g
             print(f"Trained generator is saved to: {path_g}.")
         return best_perf_d, path_d, best_perf_g, path_g
            
-    def train_kbgan(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data: tuple,
-                use_early_stopping: bool=False, patience: int=10, optimizer_name: str = 'Adam',
-                is_save_kbgan: bool=True) -> Tuple[float, str]:
+    def train_kbgan(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data_w_label: tuple,
+                rank_class_balance: float=5.0, use_early_stopping: bool=False, patience: int=10,
+                optimizer_name: str = 'Adam', is_save_kbgan: bool=True) -> Tuple[float, str]:
         if (not self.generator.model.is_trained_or_loaded()) or (not self.discriminator.model.is_trained_or_loaded()):
             raise ValueError("Both generator and discriminator must be pretrained or loaded before being trained!")
-        
         if not isinstance(train_data[0], torch.Tensor):
             train_data = [torch.LongTensor(vec) for vec in train_data]
-        if not isinstance(valid_data[0], torch.Tensor):
-            valid_data = [torch.LongTensor(vec) for vec in valid_data]
+        if not isinstance(valid_data_w_label[0], torch.Tensor):
+            valid_data_w_label = [torch.LongTensor(vec) for vec in valid_data_w_label]
 
         # log_vars[0] for Ranking, log_vars[1] for Classification
         # Initializing at 0 means initial weight sigma=1
@@ -361,21 +357,24 @@ class KBGAN():
                 # Target: 1 for Real, 0 for Fake
                 target_pos = torch.ones_like(pos_scores_norm, dtype=torch.float32)
                 target_neg = torch.zeros_like(neg_scores_norm, dtype=torch.float32)
-                
-                loss_class = bce_criterion(pos_scores_norm, target_pos) + bce_criterion(neg_scores_norm, target_neg)
 
                 # Formula: L_total = exp(-s1)*L1 + s1 + exp(-s2)*L2 + s2
-                # Reduce loss_rank to scalar
+                # L1 = Ranking Loss, L2 = Classification Loss, s1 and s2 are log_vars for dynamic weighting
+
+                # Calculate classification loss
+                loss_class = bce_criterion(pos_scores_norm, target_pos) + bce_criterion(neg_scores_norm, target_neg)
+
+                precision_class = torch.exp(-self.log_vars[1])
+                loss_class_weighted = precision_class * loss_class + self.log_vars[1]
+
+                # Calculate ranking loss
                 loss_rank_scalar = torch.mean(loss_rank)
                 
                 precision_rank = torch.exp(-self.log_vars[0])
                 loss_rank_weighted = precision_rank * loss_rank_scalar + self.log_vars[0]
                 
-                precision_class = torch.exp(-self.log_vars[1])
-                loss_class_weighted = precision_class * loss_class + self.log_vars[1]
-                
-                # Weight ranking loss more heavily (5x) to focus on link prediction task
-                total_loss = 5.0 * loss_rank_weighted + loss_class_weighted
+                # Calculate total loss with balance factor
+                total_loss = (rank_class_balance * loss_rank_weighted + loss_class_weighted) / (rank_class_balance + 1)
 
                 # Optimizer Step
                 self.discriminator.model.opt.zero_grad()
@@ -406,13 +405,14 @@ class KBGAN():
                         self.log_vars[0].item(), self.log_vars[1].item())
 
             if (epoch + 1) % config._config.KBGAN.epoch_per_test == 0:
-                metrics = self.discriminator.model.evaluate_on_ranking(valid_data, self.n_entity, heads, tails, filt=True)
-                perf = metrics['MRR']
+                rank_metrics = self.discriminator.model.evaluate_on_ranking(valid_data_w_label, self.n_entity, heads, tails, filt=True)
+                class_metrics = self.discriminator.model.evaluate_on_classification(valid_data_w_label, optimizing_metric='accuracy')
+                perf = (rank_class_balance * rank_metrics['mrr'] + class_metrics['accuracy']) / (rank_class_balance + 1)
+
+                logging.info('Validation at epoch %d: MRR=%f, Accuracy=%f, Perf=%f', 
+                            epoch + 1, rank_metrics['mrr'], class_metrics['accuracy'], perf)
                 if perf > best_perf:
-                    if is_save_kbgan:
-                        print(f"Saving KBGAN at epoch {epoch + 1} with MRR {best_perf}.")
-                        self.kbgan_path = self.save_kbgan()
-                        print(f"Saved KBGAN successfully to: {self.kbgan_path}")
+                    print(f"Saving KBGAN at epoch {epoch + 1} with performance: {best_perf}")
                     best_perf = perf
                     patience_counter = 0
                 else:
@@ -424,7 +424,7 @@ class KBGAN():
 
         print(f'Trained KBGAN successfully: {self.generator_type} generator, {self.discriminator_type} discriminator.')
         if is_save_kbgan:
-            print(f"Saving trained KBGAN (discriminator) with best MRR {best_perf}.")
+            print(f"Saving trained KBGAN (discriminator) with performance: {best_perf}")
             self.kbgan_path = self.save_kbgan()
             print(f"Saved trained KBGAN (discriminator) successfully to: {self.kbgan_path}")
             return best_perf, self.kbgan_path
@@ -436,7 +436,6 @@ class KBGAN():
             k_list = [1, 3, 10]
         if (not self.discriminator.model.is_trained_or_loaded()):
             raise ValueError("KBGAN (discriminator) must be trained before being tested!")
-        
         if not isinstance(test_data[0], torch.Tensor):
             test_data = [torch.LongTensor(vec) for vec in test_data]
 
@@ -458,7 +457,6 @@ class KBGAN():
             k_list = [1, 3, 10]
         if (not self.discriminator.model.is_trained_or_loaded()):
             raise ValueError("Discriminator must be trained before being tested!")
-    
         if not isinstance(test_data[0], torch.Tensor):
             test_data = [torch.LongTensor(vec) for vec in test_data]
 
@@ -472,7 +470,6 @@ class KBGAN():
             k_list = [1, 3, 10]
         if (not self.generator.model.is_trained_or_loaded()):
             raise ValueError("Generator must be trained before being tested!")
-        
         if not isinstance(test_data[0], torch.Tensor):
             test_data = [torch.LongTensor(vec) for vec in test_data]
 
