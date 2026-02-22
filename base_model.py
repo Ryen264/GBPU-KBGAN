@@ -304,36 +304,5 @@ class BaseModel(object):
         metrics_str = f"Classification metrics: {metrics_display}\n"
         logging.info(metrics_str)
         return metrics
-
-    # def train(self, train_data, corrupter, tester,
-    #           use_early_stopping=False, patience=10, optimizer_name='Adam',
-    #           use_gpu: bool = None, is_save_model: bool = True) -> Tuple[float, str]:
-    #     pass
-
-    # def zero_grad(self) -> None:
-    #     self.model.zero_grad()
-
-    # def constraint(self) -> None:
-    #     self.model.constraint()
-
-    # def _ensure_optimizer(self) -> None:
-    #     if not hasattr(self, 'opt'):
-    #         self.opt = Adam(self.model.parameters(), weight_decay=self.weight_decay)
-
-    # def is_trained_or_loaded(self) -> bool:
-    #     return self.model is not None
-    
-    # def _is_distance_based(self) -> bool:
-    #     """Check if model is distance-based (lower score is better)."""
-    #     return self.model_type in ['TransE', 'TransD']
-    
-    # def get_score(self, head, relation, tail) -> torch.Tensor:
-    #     return self.model.score(head, relation, tail)
-    
-    # def get_prob_logit(self, head, relation, tail) -> torch.Tensor:
-    #     return self.model.prob_logit(head, relation, tail)
-    
-    # def get_pair_loss(self, head, relation, tail, head_bad, tail_bad) -> torch.Tensor:
-    #     return self.model.pair_loss(head, relation, tail, head_bad, tail_bad)
     
     
