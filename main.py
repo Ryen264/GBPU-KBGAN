@@ -31,13 +31,13 @@ def main():
 
     t_total = time.perf_counter()
     _config.dataset = 'wn18rr'
-    _config['KBGAN']['n_epoch'] = 4
-    _config['KBGAN']['epoch_per_test'] = 2
+    # _config['KBGAN']['n_epoch'] = 4
+    # _config['KBGAN']['epoch_per_test'] = 2
 
-    _config[_config.d_config]['n_epoch'] = 4
-    _config[_config.g_config]['n_epoch'] = 4
-    _config[_config.d_config]['epoch_per_test'] = 2
-    _config[_config.g_config]['epoch_per_test'] = 2
+    # _config[_config.d_config]['n_epoch'] = 4
+    # _config[_config.g_config]['n_epoch'] = 4
+    # _config[_config.d_config]['epoch_per_test'] = 2
+    # _config[_config.g_config]['epoch_per_test'] = 2
     # _config.task = 'all'
 
     # Init logging now that config is prepared

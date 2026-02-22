@@ -1,5 +1,5 @@
-g_config: ComplEx
-d_config: TransD
+g_config: DistMult
+d_config: TransE
 test_batch_size: 100
 dataset: wn18rr
 # task: triple-classification
