@@ -1,3 +1,4 @@
+from torch.autograd import Variable
 import torch
 import torch.nn as nn
 import torch.nn.functional as nnf
@@ -15,44 +16,31 @@ class BaseModule(nn.Module):
     def __init__(self, n_entity: int, n_relation: int):
         super().__init__()
         
-        self.n_entity = n_entity
-        self.n_relation = n_relation
-        self.model_type = None      # to be set by subclasses, type: str
-        self.model_config = None    # to be set by subclasses, type: config.Config
-
-    def init_weight(self) -> None:
-        pass
-
-    def forward(self, head, relation, tail) -> torch.Tensor:
-        pass
-
-    def dist(self, head, relation, tail) -> torch.Tensor:
-        pass
-
     def score(self, head, relation, tail) -> torch.Tensor:
-        pass
+        raise NotImplementedError
+    
+    def dist(self, head, relation, tail) -> torch.Tensor:
+        raise NotImplementedError
 
     def prob_logit(self, head, relation, tail) -> torch.Tensor:
-        pass
-
-    def constraint(self) -> None:
-        pass
+        raise NotImplementedError
 
     def prob(self, head, relation, tail) -> torch.Tensor:
         return nnf.softmax(self.prob_logit(head, relation, tail), dim=-1)
-
+    
+    def constraint(self) -> None:
+        pass
+    
     def pair_loss(self, head, relation, tail, head_bad, tail_bad) -> torch.Tensor:
         d_good = self.dist(head, relation, tail)
         d_bad = self.dist(head_bad, relation, tail_bad)
         return nnf.relu(self.margin + d_good - d_bad)
-
+    
     def softmax_loss(self, head, relation, tail, truth) -> torch.Tensor:
         probs = self.prob(head, relation, tail)
         n = probs.size(0)
-        # Ensure indexing tensors are on same device as `probs`
-        idx = torch.arange(0, n, device=probs.device, dtype=torch.long)
-        truth = truth.to(probs.device)
-        truth_probs = torch.log(probs[idx, truth] + 1e-30)
+        row_idx = torch.arange(n, device=probs.device)
+        truth_probs = torch.log(probs[row_idx, truth] + 1e-30)
         return -truth_probs
     
 class BaseModel(object):
@@ -67,89 +55,77 @@ class BaseModel(object):
         self.n_relation = n_relation
         self.model_type = None      # to be set by subclasses, type: str
         self.model_config = None    # to be set by subclasses, type: config.Config
-        self.model_path = None      # to be set by subclasses, type: str
-        self.model = None           # to be set when train/load, type: BaseModule
+        self.model_path = None 
+        self.model = None # type: BaseModule
         self.weight_decay = 0
-        self._set_device(use_gpu)
+        if use_gpu is None:
+            use_gpu = torch.cuda.is_available()
 
+        if use_gpu and not torch.cuda.is_available():
+            raise RuntimeError("CUDA requested but not available.")
+
+        self.device = torch.device('cuda' if use_gpu else 'cpu')
         self.task_dir = os.path.join('.', 'models', config._config.dataset, config._config.task, 'components')
+        print(f"Model will be saved to: {self.task_dir}")
         os.makedirs(self.task_dir, exist_ok=True)
 
-    def _set_device(self, use_gpu: bool = None) -> None:
-        """Set runtime device for this BaseModel instance."""
-        if use_gpu is None:
-            # use device selected by config module
-            try:
-                self.device = config.device
-            except AttributeError:
-                self.device = torch.device('cpu')
-        elif use_gpu:
-            if torch.cuda.is_available():
-                gpu_id = config.select_gpu()
-                if gpu_id is not None:
-                    torch.cuda.set_device(gpu_id)
-                    self.device = torch.device(f"cuda:{gpu_id}")
-                else:
-                    self.device = torch.device('cuda')
-            else:
-                logging.warning('Requested GPU but CUDA is not available. Falling back to CPU.')
-                self.device = torch.device('cpu')
-        else:
-            self.device = torch.device('cpu')
+    def save(self, filename) -> str:
+        torch.save(self.model.state_dict(), filename)
 
-    def load(self, model_path) -> None:
-        pass
+    def load(self, filename):
+        self.model.load_state_dict(torch.load(filename, map_location=lambda storage, location: storage.cuda()))
 
-    def train(self, train_data, corrupter, tester,
-              use_early_stopping=False, patience=10, optimizer_name='Adam',
-              use_gpu: bool = None, is_save_model: bool = True) -> Tuple[float, str]:
-        pass
-
-    def save(self, save_path: Optional[str] = None) -> str:
-        # Allow caller to override path at save time
-        if save_path is not None:
-            self.model_path = save_path
-
-        if self.model_path is None:
-            raise ValueError("Model path is not set. Cannot save model.")
-
-        # Ensure destination directory exists
-        dir_name = os.path.dirname(self.model_path)
-        if dir_name:
-            os.makedirs(dir_name, exist_ok=True)
-
-        try:
-            torch.save(self.model.state_dict(), self.model_path)
-        except Exception as e:
-            logging.error(f"Error saving model: {e}")
-        return self.model_path
-
-    def zero_grad(self) -> None:
-        self.model.zero_grad()
-
-    def constraint(self) -> None:
-        self.model.constraint()
-
-    def _ensure_optimizer(self) -> None:
+    def gen_step(self, head, relation, tail, n_sample=1, temperature=1.0, train=True):
         if not hasattr(self, 'opt'):
             self.opt = Adam(self.model.parameters(), weight_decay=self.weight_decay)
 
-    def is_trained_or_loaded(self) -> bool:
-        return self.model is not None
-    
-    def _is_distance_based(self) -> bool:
-        """Check if model is distance-based (lower score is better)."""
-        return self.model_type in ['TransE', 'TransD']
-    
-    def get_score(self, head, relation, tail) -> torch.Tensor:
-        return self.model.score(head, relation, tail)
-    
-    def get_prob_logit(self, head, relation, tail) -> torch.Tensor:
-        return self.model.prob_logit(head, relation, tail)
-    
-    def get_pair_loss(self, head, relation, tail, head_bad, tail_bad) -> torch.Tensor:
-        return self.model.pair_loss(head, relation, tail, head_bad, tail_bad)
-    
+        # Forward pass: generate samples
+        n, m = tail.size()
+        relation_var = Variable(relation.to(self.device))
+        head_var = Variable(head.to(self.device))
+        tail_var = Variable(tail.to(self.device))
+
+        logits = self.model.prob_logit(head_var, relation_var, tail_var) / temperature
+        probs = nnf.softmax(logits)
+        row_idx = torch.arange(0, n).type(torch.LongTensor).unsqueeze(1).expand(n, n_sample)
+        sample_idx = torch.multinomial(probs, n_sample, replacement=True)
+        sample_heads = head[row_idx, sample_idx.data.cpu()]
+        sample_tails = tail[row_idx, sample_idx.data.cpu()]
+
+        # Yield samples to get rewards from discriminator
+        rewards = yield sample_heads, sample_tails
+
+        # Backward pass: update generator with REINFORCE
+        if train:
+            self.model.zero_grad()
+
+            log_probs = nnf.log_softmax(logits)
+            reinforce_loss = -torch.sum(Variable(rewards) * log_probs[row_idx.cuda(), sample_idx.data])
+            reinforce_loss.backward()
+
+            self.opt.step()
+            self.model.constraint()
+        yield None
+
+    def dis_step(self, src, rel, dst, src_fake, dst_fake, train=True):
+        if not hasattr(self, 'opt'):
+            self.opt = Adam(self.model.parameters(), weight_decay=self.weight_decay)
+        head_var = Variable(src.to(self.device))
+        relation_var = Variable(rel.to(self.device))
+        tail_var = Variable(dst.to(self.device))
+
+        head_fake_var = Variable(src_fake.to(self.device))
+        tail_fake_var = Variable(dst_fake.to(self.device))
+        losses = self.model.pair_loss(head_var, relation_var, tail_var, head_fake_var, tail_fake_var)
+        fake_scores = self.model.score(head_fake_var, relation_var, tail_fake_var)
+
+        if train:
+            self.model.zero_grad()
+            torch.sum(losses).backward()
+            self.opt.step()
+            self.model .constraint()
+        return losses.data, -fake_scores.data
+
     def evaluate_on_ranking(self, test_data, n_entity, heads, tails, filt=True, k_list=None) -> dict:
         if k_list is None:
             k_list = [1, 3, 10]
@@ -260,7 +236,7 @@ class BaseModel(object):
             best_threshold = 0.0
 
             # Determine if model is distance-based or similarity-based
-            is_distance_based = self._is_distance_based()
+            is_distance_based = self.model.is_distance_based
 
             for threshold in threshold_values:
                 if is_distance_based:
@@ -310,7 +286,7 @@ class BaseModel(object):
         )
 
         # determine whether smaller score means positive (distance-based models)
-        is_distance_based = self._is_distance_based()
+        is_distance_based = self.model.is_distance_based
 
         # Vectorized prediction generation
         scores_array = np.array(scores_list)
@@ -328,3 +304,36 @@ class BaseModel(object):
         metrics_str = f"Classification metrics: {metrics_display}\n"
         logging.info(metrics_str)
         return metrics
+
+    # def train(self, train_data, corrupter, tester,
+    #           use_early_stopping=False, patience=10, optimizer_name='Adam',
+    #           use_gpu: bool = None, is_save_model: bool = True) -> Tuple[float, str]:
+    #     pass
+
+    # def zero_grad(self) -> None:
+    #     self.model.zero_grad()
+
+    # def constraint(self) -> None:
+    #     self.model.constraint()
+
+    # def _ensure_optimizer(self) -> None:
+    #     if not hasattr(self, 'opt'):
+    #         self.opt = Adam(self.model.parameters(), weight_decay=self.weight_decay)
+
+    # def is_trained_or_loaded(self) -> bool:
+    #     return self.model is not None
+    
+    # def _is_distance_based(self) -> bool:
+    #     """Check if model is distance-based (lower score is better)."""
+    #     return self.model_type in ['TransE', 'TransD']
+    
+    # def get_score(self, head, relation, tail) -> torch.Tensor:
+    #     return self.model.score(head, relation, tail)
+    
+    # def get_prob_logit(self, head, relation, tail) -> torch.Tensor:
+    #     return self.model.prob_logit(head, relation, tail)
+    
+    # def get_pair_loss(self, head, relation, tail, head_bad, tail_bad) -> torch.Tensor:
+    #     return self.model.pair_loss(head, relation, tail, head_bad, tail_bad)
+    
+    
