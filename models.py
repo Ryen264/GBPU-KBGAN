@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from torch.optim import Adam, SGD, AdamW, RMSprop, Adagrad
 from torch.autograd import Variable
+import torch.nn.functional as nnf
 from typing import Tuple, Optional
 import logging
 import os
@@ -55,6 +56,7 @@ class TransE(BaseModel):
         self.n_epoch = self.model_config.n_epoch
         self.n_batch = self.model_config.n_batch
         self.epoch_per_test = self.model_config.epoch_per_test
+        self.margin = self.model_config.margin
 
     def load(self, model_path) -> None:
         # Initialize model if not already trained or loaded
@@ -73,7 +75,7 @@ class TransE(BaseModel):
               use_early_stopping=False, patience=10, optimizer_name='Adam',
               use_gpu: bool = None, is_save_model: bool = True) -> Tuple[float, Optional[str]]:
         if use_gpu is not None:
-            self._set_device(use_gpu)
+            self.set_device(use_gpu)
         # Initialize model if not already trained or loaded
         if self.model is None:
             self.model = TransEModule(self.n_entity, self.n_relation)
@@ -104,8 +106,15 @@ class TransE(BaseModel):
             for h0, r, t0, h1, t1 in batch_by_num(self.n_batch, head_device, relation_device, tail_device,
                                                   head_corrupted, tail_corrupted, n_sample=n_train):
                 self.zero_grad()
-                loss = torch.sum(self.model.pair_loss(Variable(h0), Variable(r), Variable(t0), Variable(h1), Variable(t1)))
+
+                h0_var, r_var, t0_var, h1_var, t1_var = Variable(h0), Variable(r), Variable(t0), Variable(h1), Variable(t1)
+                d_good = self.model.dist(h0_var, r_var, t0_var)
+                d_bad = self.model.dist(h1_var, r_var, t1_var)
+
+                pair_loss = nnf.relu(d_good - d_bad + self.margin)
+                loss = torch.sum(pair_loss)
                 loss.backward()
+
                 optimizer.step()
                 self.model.constraint()
                 epoch_loss += loss.item()
@@ -180,6 +189,7 @@ class TransD(BaseModel):
         self.n_epoch = self.model_config.n_epoch
         self.n_batch = self.model_config.n_batch
         self.epoch_per_test = self.model_config.epoch_per_test
+        self.margin = self.model_config.margin
 
     def load_vec(self, vecpath) -> None:
         entity_mat = np.loadtxt(os.path.join(vecpath, 'entity2vec.vec'))
@@ -234,16 +244,22 @@ class TransD(BaseModel):
             tail = tail[rand_idx]
 
             head_corrupted, tail_corrupted = corrupter.corrupt(head, relation, tail)
-            head_cuda = head.to(self.device)
-            relation_cuda = relation.to(self.device)
-            tail_cuda = tail.to(self.device)
+            head_device = head.to(self.device)
+            relation_device = relation.to(self.device)
+            tail_device = tail.to(self.device)
             head_corrupted = head_corrupted.to(self.device)
             tail_corrupted = tail_corrupted.to(self.device)
             epoch_loss = 0
-            for h0, r, t0, h1, t1 in batch_by_num(self.n_batch, head_cuda, relation_cuda, tail_cuda,
+            for h0, r, t0, h1, t1 in batch_by_num(self.n_batch, head_device, relation_device, tail_device,
                                                   head_corrupted, tail_corrupted, n_sample=n_train):
                 self.zero_grad()
-                loss = torch.sum(self.model.pair_loss(Variable(h0), Variable(r), Variable(t0), Variable(h1), Variable(t1)))
+
+                h0_var, r_var, t0_var, h1_var, t1_var = Variable(h0), Variable(r), Variable(t0), Variable(h1), Variable(t1)
+                d_good = self.model.dist(h0_var, r_var, t0_var)
+                d_bad = self.model.dist(h1_var, r_var, t1_var)
+
+                pair_loss = nnf.relu(d_good - d_bad + self.margin)
+                loss = torch.sum(pair_loss)
                 loss.backward()
 
                 optimizer.step()
@@ -324,7 +340,7 @@ class DistMult(BaseModel):
               use_early_stopping=False, patience=10, optimizer_name='Adam',
               use_gpu: bool = None, is_save_model: bool = True) -> Tuple[float, Optional[str]]:
         if use_gpu is not None:
-            self._set_device(use_gpu)
+            self.set_device(use_gpu)
 
         # Initialize model if not already trained or loaded
         if self.model is None:
@@ -354,8 +370,12 @@ class DistMult(BaseModel):
 
             for hs, rs, ts in batch_by_num(self.n_batch, head_corrupted, relation_corrupted, tail_corrupted, n_sample=n_train):
                 self.zero_grad()
+
                 label = torch.zeros(len(hs)).type(torch.LongTensor).to(self.device)
-                loss = torch.sum(self.model.softmax_loss(Variable(hs), Variable(rs), Variable(ts), label))
+                hs_var, rs_var, ts_var = Variable(hs), Variable(rs), Variable(ts)
+                softmax_loss = self.model.softmax_loss(hs_var, rs_var, ts_var, label)
+
+                loss = torch.sum(softmax_loss)
                 loss.backward()
 
                 optimizer.step()
@@ -475,9 +495,12 @@ class ComplEx(BaseModel):
 
             for hs, rs, ts in batch_by_num(self.n_batch, head_corrupted, relation_corrupted, tail_corrupted, n_sample=n_train):
                 self.zero_grad()
+                
                 label = torch.zeros(len(hs)).type(torch.LongTensor).to(self.device)
-
-                loss = torch.sum(self.model.softmax_loss(Variable(hs), Variable(rs), Variable(ts), label))
+                hs_var, rs_var, ts_var = Variable(hs), Variable(rs), Variable(ts)
+                softmax_loss = self.model.softmax_loss(hs_var, rs_var, ts_var, label)
+                
+                loss = torch.sum(softmax_loss)
                 loss.backward()
 
                 optimizer.step()
