@@ -203,9 +203,7 @@ class Component():
         return pair_loss.data, -fake_scores.data, d_good.data.max().item(), d_bad.data.min().item()
 
     def evaluate_on_ranking(self, test_data: tuple, heads: torch.Tensor, tails: torch.Tensor,
-                            filt=True, k_list=None) -> dict:
-        if k_list is None:
-            k_list = [1, 3, 10]
+                            filt: bool=True, k_list: list=[1, 3, 10]) -> dict:
         if not self.is_trained_or_loaded():
             raise ValueError("Component must be trained before being tested!")
 
@@ -271,7 +269,7 @@ class Component():
         logging.info(ranking_metrics_str)
         return ranking_metrics
 
-    def evaluate_on_classification(self, test_data: tuple, optimizing_metric='accuracy', threshold: float=None) -> dict:
+    def evaluate_on_classification(self, test_data: tuple, optimizing_metric: str='accuracy', threshold: float=None) -> dict:
         if not self.is_trained_or_loaded():
             raise ValueError("Component must be trained before being tested!")
         
@@ -383,8 +381,7 @@ class Component():
         return classification_metrics
 
 class KBGAN():
-    def __init__(self, discriminator_type: str, generator_type: str,
-                 n_entity: int, n_relation: int):
+    def __init__(self, discriminator_type: str, generator_type: str, n_entity: int, n_relation: int):
         """
         discriminator_type = ["TransE", "TransD"]
         generator_type = ["DistMult", "ComplEx"]
@@ -477,7 +474,7 @@ class KBGAN():
            
     def train_kbgan(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data_w_label: tuple,
                 rank_class_balance: float=5.0, use_early_stopping: bool=False, patience: int=10,
-                optimizer_name: str = 'Adam', is_save_kbgan: bool=True) -> Tuple[float, str]:
+                optimizer_name: str='Adam', is_save_kbgan: bool=True) -> Tuple[float, str]:
         if (not self.generator.is_trained_or_loaded()) or (not self.discriminator.is_trained_or_loaded()):
             raise ValueError("Both generator and discriminator must be pretrained or loaded before being trained!")
         if not isinstance(train_data[0], torch.Tensor):
@@ -615,9 +612,7 @@ class KBGAN():
         return best_perf, None
 
     def evaluate_on_link_prediction(self, heads: torch.Tensor, tails: torch.Tensor, test_data: tuple,
-                                        filt: bool=True, k_list=None) -> dict:
-        if k_list is None:
-            k_list = [1, 3, 10]
+                                        filt: bool=True, k_list: list=[1, 3, 10]) -> dict:
         if (not self.discriminator.is_trained_or_loaded()):
             raise ValueError("KBGAN (discriminator) must be trained before being tested!")
         if not isinstance(test_data[0], torch.Tensor):
@@ -627,7 +622,7 @@ class KBGAN():
         metrics = self.discriminator.evaluate_on_ranking(test_data, heads, tails, filt=filt, k_list=k_list)
         return metrics
 
-    def evaluate_on_triple_classification(self, test_data_with_labels: tuple, optimizing_metric='accuracy') -> Tuple[dict, float, list, list]:
+    def evaluate_on_triple_classification(self, test_data_with_labels: tuple, optimizing_metric: str='accuracy') -> Tuple[dict, float, list, list]:
         if (not self.discriminator.is_trained_or_loaded()):
             raise ValueError("KBGAN (discriminator) must be trained before being tested!")
         

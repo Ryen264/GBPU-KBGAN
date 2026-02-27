@@ -5,8 +5,10 @@ import torch
 import numpy as np
 from numpy.random import choice
 
-def sparse_heads_tails(n_entity, train_data, valid_data=None, test_data=None) -> Tuple[Dict, Dict]:
-    def unpack_data(data):
+def sparse_heads_tails(n_entity: int, train_data: tuple[list[int], list[int], list[int]],
+                                    valid_data: tuple[list[int], list[int], list[int]]=None,
+                                    test_data: tuple[list[int], list[int], list[int]]=None) -> Tuple[Dict, Dict]:
+    def unpack_data(data: tuple[list[int], list[int], list[int]]) -> Tuple[list[int], list[int], list[int]]:
         """Helper to unpack data or return empty lists."""
         if data:
             return data
@@ -38,7 +40,7 @@ def sparse_heads_tails(n_entity, train_data, valid_data=None, test_data=None) ->
         tails_sparse[k] = torch.sparse_coo_tensor(indices, values, torch.Size([n_entity]), dtype=torch.float32)
     return heads_sparse, tails_sparse
 
-def inplace_shuffle(*lists) -> None:
+def inplace_shuffle(*lists: list) -> None:
     idx = []
     for i in range(len(lists[0])):
         idx.append(randint(0, i+1))
@@ -46,7 +48,7 @@ def inplace_shuffle(*lists) -> None:
         for i, item in enumerate(ls):
             ls[i], ls[idx[i]] = ls[idx[i]], ls[i]
 
-def batch_by_num(n_batch, *lists, n_sample=None):
+def batch_by_num(n_batch: int, *lists: list, n_sample: int=None):
     if n_sample is None:
         n_sample = len(lists[0])
         
@@ -59,7 +61,7 @@ def batch_by_num(n_batch, *lists, n_sample=None):
         else:
             yield ret[0]
 
-def batch_by_size(batch_size, *lists, n_sample=None):
+def batch_by_size(batch_size: int, *lists: list, n_sample: int=None):
     if n_sample is None:
         n_sample = len(lists[0])
 
@@ -73,7 +75,7 @@ def batch_by_size(batch_size, *lists, n_sample=None):
         else:
             yield ret[0]
 
-def get_bern_prob(data, n_relation) -> torch.Tensor:
+def get_bern_prob(data: tuple[list[int], list[int], list[int]], n_relation: int) -> torch.Tensor:
     head, relation, tail = data
     edges = defaultdict(lambda: defaultdict(lambda: set()))
     rev_edges = defaultdict(lambda: defaultdict(lambda: set()))
@@ -88,11 +90,11 @@ def get_bern_prob(data, n_relation) -> torch.Tensor:
     return bern_prob
 
 class BernCorrupter(object):
-    def __init__(self, data, n_entity, n_relation):
+    def __init__(self, data: tuple[list[int], list[int], list[int]], n_entity: int, n_relation: int):
         self.bern_prob = get_bern_prob(data, n_relation)
         self.n_entity = n_entity
 
-    def corrupt(self, head, relation, tail) -> Tuple[torch.Tensor, torch.Tensor]:
+    def corrupt(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         prob = self.bern_prob[relation]
         selection = torch.bernoulli(prob).numpy().astype('int64')
         entity_random = choice(self.n_entity, len(head))
@@ -101,12 +103,12 @@ class BernCorrupter(object):
         return torch.from_numpy(head_out), torch.from_numpy(tail_out)
 
 class BernCorrupterMulti(object):
-    def __init__(self, data, n_entity, n_relation, n_sample):
+    def __init__(self, data: tuple[list[int], list[int], list[int]], n_entity: int, n_relation: int, n_sample: int):
         self.bern_prob = get_bern_prob(data, n_relation)
         self.n_entity = n_entity
         self.n_sample = n_sample
 
-    def corrupt(self, head, relation, tail, keep_truth=True) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def corrupt(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor, keep_truth=True) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         n = len(head)
         prob = self.bern_prob[relation]
         selection = torch.bernoulli(prob).numpy().astype('bool')

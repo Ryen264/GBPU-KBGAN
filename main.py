@@ -2,24 +2,19 @@ import torch
 import os
 import sys
 import time
-from config import config, overwrite_config_with_args, logger_init
+from config import config, overwrite_config_with_args, logger_init, log_step
 from data_loader import index_entity_relation, graph_size, read_data
 from datasets import sparse_heads_tails, inplace_shuffle
 from kbgan import KBGAN
 
 MODE = 'full-train'  # full-train / gan-train / test-only
 K_LIST = [1, 3, 10]  # Default k values for ranking metrics
+CONFIG_PATH = './config/config_wn18rr.yaml'
 
 # ./main.py mode=<mode> [other optional args to overwrite config]
 
-def log_step(label: str, start_ts: float) -> float:
-    """Print elapsed time for a pipeline step and return a new start timestamp."""
-    elapsed = time.perf_counter() - start_ts
-    print(f"[TIMER] {label}: {elapsed:.2f}s")
-    return time.perf_counter()
-
 def main():    
-    _config = config()
+    _config = config(CONFIG_PATH)
     global MODE
 
     if len(sys.argv) > 1:
