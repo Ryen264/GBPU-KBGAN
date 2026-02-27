@@ -3,7 +3,13 @@ import numpy as np
 import torch
 from typing import Dict, List, Union
 
-def ranking_metrics(scores, target, k_list=None) -> Dict[str, Union[int, float, List[int]]]:
+def mrr_mr_hitk(scores, target, k=10):
+    _, sorted_idx = torch.sort(scores)
+    find_target = sorted_idx == target
+    target_rank = torch.nonzero(find_target)[0, 0] + 1
+    return 1 / target_rank, target_rank, int(target_rank <= k)
+
+def ranking_metrics(scores: torch.Tensor, target: int, k_list: List[int]=[1, 3, 10]) -> Dict[str, Union[int, float, List[int]]]:
     """
     Compute link prediction metrics (MR, MRR, Hits@K).
     
@@ -15,8 +21,6 @@ def ranking_metrics(scores, target, k_list=None) -> Dict[str, Union[int, float, 
     Returns:
         Dictionary with keys: 'mr', 'mrr', 'hits', 'target_score'
     """
-    if k_list is None:
-        k_list = [1, 3, 10]
     _, sorted_idx = torch.sort(scores)
     find_target = sorted_idx == target
 

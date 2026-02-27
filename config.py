@@ -6,11 +6,10 @@ import os
 import datetime
 
 _config = None
-
 class ConfigDict(dict):
     __getattr__ = dict.__getitem__
 
-def config(config_path='./config/config_wn18rr.yaml'):
+def config(config_path: str) -> ConfigDict:
     """
     default: config("config_wn18rr.yaml")
     """
@@ -28,7 +27,7 @@ def config(config_path='./config/config_wn18rr.yaml'):
             _config = _make_config_dict(yaml.load(f, Loader=yaml.FullLoader))
     return _config
 
-def overwrite_config_with_args(args=[], sep='.'):
+def overwrite_config_with_args(args: list=[], sep: str='.') -> None:
     """
     Manually pass parameters. E.g. overwrite_config_with_args(["--pretrain_config=TransD"])
     TransE.n_epoch=2
@@ -37,7 +36,7 @@ def overwrite_config_with_args(args=[], sep='.'):
     steps[-1] = "n_epoch"
     val=2
     """
-    def path_set(path, val, sep='.', auto_convert=False):
+    def path_set(path: str, val: str, sep: str='.', auto_convert: bool=False):
         steps = path.split(sep)
         obj = _config
         for step in steps[:-1]:
@@ -64,8 +63,8 @@ def overwrite_config_with_args(args=[], sep='.'):
             if path != 'config':
                 path_set(path, val, sep, auto_convert=True)
 
-def dump_config():
-    def _dump_config(obj, prefix):
+def dump_config() -> None:
+    def _dump_config(obj: dict, prefix: tuple) -> None:
         if isinstance(obj, dict):
             for k, v in obj.items():
                 _dump_config(v, prefix + (k,))
@@ -76,8 +75,7 @@ def dump_config():
             logging.debug('%s=%s', '.'.join(prefix), repr(obj))
     return _dump_config(_config, tuple())
 
-
-def select_gpu():
+def select_gpu() -> int:
     if not torch.cuda.is_available():
         logging.warning("No GPU available. Running on CPU.")
         return None
@@ -133,7 +131,7 @@ def select_gpu():
             logging.info('All GPUs are occupied. Automatically selected GPU %d because it has the most free memory.', i)
             return i
 
-def logger_init():
+def logger_init() -> None:
     root_logger = logging.getLogger()
     root_logger.handlers.clear()
     root_logger.setLevel(logging.DEBUG)
@@ -155,6 +153,12 @@ def logger_init():
 
     if config().log.dump_config:
         dump_config()
+
+def log_step(label: str, start_ts: float) -> float:
+    """Print elapsed time for a pipeline step and return a new start timestamp."""
+    elapsed = datetime.time.perf_counter() - start_ts
+    print(f"[TIMER] {label}: {elapsed:.2f}s")
+    return datetime.time.perf_counter()
 
 gpu_id = select_gpu()
 device = None

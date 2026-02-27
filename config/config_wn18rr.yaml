@@ -10,6 +10,7 @@ KBGAN:
   n_batch: 100
   epoch_per_test: 100
   temperature: 1.0
+  rank_class_balance: 5.0
   patience: 10
   optimizer_name: Adagrad
   early_stopping_pretrain: false

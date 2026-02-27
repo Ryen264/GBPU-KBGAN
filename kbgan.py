@@ -28,32 +28,31 @@ class Component():
         else:
             raise ValueError(f"Input model type should be in list [\"TransE\", \"TransD\", \"DistMult\", \"ComplEx\"]!")
 
-        use_gpu = (config.device.type == 'cuda')
+        self.use_gpu = (config.device.type == 'cuda')
         if self.model_type == 'TransE':
-            self.model = TransE(n_entity, n_relation, use_gpu=use_gpu)
+            self.model = TransE(n_entity, n_relation, use_gpu=self.use_gpu)
         elif self.model_type == 'TransD':
-            self.model = TransD(n_entity, n_relation, use_gpu=use_gpu)
+            self.model = TransD(n_entity, n_relation, use_gpu=self.use_gpu)
         elif self.model_type == 'DistMult':
-            self.model = DistMult(n_entity, n_relation, use_gpu=use_gpu)
+            self.model = DistMult(n_entity, n_relation, use_gpu=self.use_gpu)
         elif self.model_type == 'ComplEx':
-            self.model = ComplEx(n_entity, n_relation, use_gpu=use_gpu)    
+            self.model = ComplEx(n_entity, n_relation, use_gpu=self.use_gpu)
 
     def load(self, model_path: str) -> None:
-        if (self.n_entity is None or self.n_relation is None):
+        if (self.model.n_entity is None or self.model.n_relation is None):
             raise ValueError("Component must be fitted before being loaded!")
     
         print(f"Loading component by path: {model_path}")
         if self.model_type == "TransE":
-            self.model = TransE(self.model.n_entity, self.model.n_relation, self.model_config)
+            self.model = TransE(self.model.n_entity, self.model.n_relation, use_gpu=self.use_gpu)
         elif self.model_type == "TransD":
-            self.model = TransD(self.model.n_entity, self.model.n_relation, self.model_config)
+            self.model = TransD(self.model.n_entity, self.model.n_relation, use_gpu=self.use_gpu)
         elif self.model_type == "DistMult":
-            self.model = DistMult(self.model.n_entity, self.model.n_relation, self.model_config)
+            self.model = DistMult(self.model.n_entity, self.model.n_relation, use_gpu=self.use_gpu)
         elif self.model_type == "ComplEx":
-            self.model = ComplEx(self.model.n_entity, self.model.n_relation, self.model_config)
+            self.model = ComplEx(self.model.n_entity, self.model.n_relation, use_gpu=self.use_gpu)
         self.model.load(model_path)
-        self.model_path = model_path
-        print(f"Loaded component successfully by: {self.model_path}")
+        print(f"Loaded component successfully by: {self.model.model_path}")
 
     def train(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data: tuple,
               use_early_stopping: bool=False, patience: int=10, optimizer_name: str='Adam',
@@ -75,12 +74,12 @@ class Component():
             tester = lambda: self.model.evaluate_on_ranking(valid_data, self.model.n_entity, heads, tails, filt=True, k_list=[1, 3, 10])
         else:
             raise ValueError(f"Unsupported task: {config._config.task}")
-        use_gpu = (config.device.type == 'cuda')
 
         print(f'Training component: {self.model_type} model.')
-        best_perf, model_path = self.model.train(train_data, corrupter, tester,
-                                                use_early_stopping=use_early_stopping, patience=patience, optimizer_name=optimizer_name,
-                                                use_gpu=use_gpu, is_save_model=is_save_model)
+        best_perf, model_path = self.model.train(
+            train_data, corrupter, tester,
+            use_early_stopping=use_early_stopping, patience=patience, optimizer_name=optimizer_name,
+            use_gpu=self.use_gpu, is_save_model=is_save_model)
         print(f'Trained component successfully: {self.model_type} model.')
         if is_save_model:
             self.model_path = model_path

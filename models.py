@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from torch.optim import Adam, SGD, AdamW, RMSprop, Adagrad
 from torch.autograd import Variable
+import torch.nn.functional as nnf
 from typing import Tuple, Optional
 import logging
 import os
@@ -53,7 +54,6 @@ class TransE(BaseModel):
         self.n_epoch = self.model_config.n_epoch
         self.n_batch = self.model_config.n_batch
         self.epoch_per_test = self.model_config.epoch_per_test
-
         self.model = TransEModule(self.n_entity, self.n_relation, self.model_config)
         self.model.to(self.device)
 
@@ -72,18 +72,18 @@ class TransE(BaseModel):
         patience_counter = 0
 
         for epoch in range(self.n_epoch):
+            epoch_loss = 0
             rand_idx = torch.randperm(n_train)
             head = head[rand_idx]
             relation = relation[rand_idx]
             tail = tail[rand_idx]
-
             head_corrupted, tail_corrupted = corrupter.corrupt(head, relation, tail)
             head_device = head.to(self.device)
             relation_device = relation.to(self.device)
             tail_device = tail.to(self.device)
             head_corrupted = head_corrupted.to(self.device)
             tail_corrupted = tail_corrupted.to(self.device)
-            epoch_loss = 0
+            
             for h0, r, t0, h1, t1 in batch_by_num(self.n_batch, head_device, relation_device, tail_device,
                                                   head_corrupted, tail_corrupted, n_sample=n_train):
                 self.model.zero_grad()
@@ -92,26 +92,11 @@ class TransE(BaseModel):
                 optimizer.step()
                 self.model.constraint()
                 epoch_loss += loss.item()
-
             logging.info('Epoch %d/%d, Loss=%f', epoch + 1, self.n_epoch, epoch_loss / n_train)
             if ((self.n_epoch >= self.epoch_per_test) and ((epoch + 1) % self.epoch_per_test == 0)):
-                metrics = tester()
-                # Support both link-prediction (MRR) and triple-classification (accuracy) metrics
-                if 'MRR' in metrics:
-                    test_perf = metrics['MRR']
-                    metric_name = 'MRR'
-                elif 'accuracy' in metrics:
-                    test_perf = metrics['accuracy']
-                    metric_name = 'accuracy'
-                else:
-                    test_perf = list(metrics.values())[0]  # fallback to first metric
-                    metric_name = list(metrics.keys())[0]
-                
+                test_perf = tester()
                 if (test_perf > best_perf):
-                    if is_save_model:
-                        print(f"[CHECKPOINT] Saving TransE at epoch {epoch + 1} with {metric_name} {test_perf}.")
-                        self.save(self.model_path)
-                        print(f"[CHECKPOINT] Saved TransE successfully to: {self.model_path}")
+                    self.save(self.model_path)
                     best_perf = test_perf
                     patience_counter = 0
                 else:
@@ -120,12 +105,6 @@ class TransE(BaseModel):
                 if (use_early_stopping and patience_counter >= patience):
                     logging.info('Early stopping triggered at epoch %d (patience=%d)', epoch + 1, patience)
                     break
-        if is_save_model:
-            metric_name = 'MRR' if 'MRR' in metrics else 'accuracy' if 'accuracy' in metrics else list(metrics.keys())[0]
-            print(f"[FINAL] Saving trained TransE with best {metric_name} {best_perf}.")
-            self.save(self.model_path)
-            print(f"[FINAL] Saved trained TransE successfully to: {self.model_path}")
-            return best_perf, self.model_path
         return best_perf, None
     
 class TransDModule(BaseModule):
@@ -183,11 +162,9 @@ class TransD(BaseModel):
     def load_vec(self, vecpath) -> None:
         entity_mat = np.loadtxt(os.path.join(vecpath, 'entity2vec.vec'))
         self.model.entity_embed.weight.data.copy_(torch.from_numpy(entity_mat))
-
         relation_mat = np.loadtxt(os.path.join(vecpath, 'relation2vec.vec'))
         n_relation = relation_mat.shape[0]
         self.model.relation_embed.weight.data.copy_(torch.from_numpy(relation_mat))
-
         a_mat = np.loadtxt(os.path.join(vecpath, 'A.vec'))
         self.model.proj_relation_embed.weight.data.copy_(torch.from_numpy(a_mat[:n_relation, :]))
         self.model.proj_entity_embed.weight.data.copy_(torch.from_numpy(a_mat[n_relation:, :]))
@@ -199,55 +176,38 @@ class TransD(BaseModel):
         
         head, relation, tail = train_data
         n_train = len(head)
-        
         optimizer_class = {'Adam': Adam, 'SGD': SGD, 'AdamW': AdamW, 'RMSprop': RMSprop, 'Adagrad': Adagrad}.get(optimizer_name, Adam)
         optimizer = optimizer_class(self.model.parameters())
-
         best_perf = 0.0
         patience_counter = 0
         
         for epoch in range(self.n_epoch):
+            epoch_loss = 0
             rand_idx = torch.randperm(n_train)
             head = head[rand_idx]
             relation = relation[rand_idx]
             tail = tail[rand_idx]
-
             head_corrupted, tail_corrupted = corrupter.corrupt(head, relation, tail)
-            head_cuda = head.to(self.device)
-            relation_cuda = relation.to(self.device)
-            tail_cuda = tail.to(self.device)
+            head_device = head.to(self.device)
+            relation_device = relation.to(self.device)
+            tail_device = tail.to(self.device)
             head_corrupted = head_corrupted.to(self.device)
             tail_corrupted = tail_corrupted.to(self.device)
-            epoch_loss = 0
-            for h0, r, t0, h1, t1 in batch_by_num(self.n_batch, head_cuda, relation_cuda, tail_cuda,
+            
+            for h0, r, t0, h1, t1 in batch_by_num(self.n_batch, head_device, relation_device, tail_device,
                                                   head_corrupted, tail_corrupted, n_sample=n_train):
                 self.model.zero_grad()
                 loss = torch.sum(self.model.pair_loss(Variable(h0), Variable(r), Variable(t0), Variable(h1), Variable(t1)))
                 loss.backward()
-
                 optimizer.step()
                 self.model.constraint()
                 epoch_loss += loss.item()
 
             logging.info('Epoch %d/%d, Loss=%f', epoch + 1, self.n_epoch, epoch_loss / n_train)
             if ((self.n_epoch >= self.epoch_per_test) and ((epoch + 1) % self.epoch_per_test == 0)):
-                metrics = tester()
-                # Support both link-prediction (MRR) and triple-classification (accuracy) metrics
-                if 'MRR' in metrics:
-                    test_perf = metrics['MRR']
-                    metric_name = 'MRR'
-                elif 'accuracy' in metrics:
-                    test_perf = metrics['accuracy']
-                    metric_name = 'accuracy'
-                else:
-                    test_perf = list(metrics.values())[0]  # fallback to first metric
-                    metric_name = list(metrics.keys())[0]
-                
+                test_perf = tester()
                 if (test_perf > best_perf):
-                    if is_save_model:
-                        print(f"[CHECKPOINT] Saving TransD at epoch {epoch + 1} with {metric_name} {test_perf}.")
-                        self.save(self.model_path)
-                        print(f"[CHECKPOINT] Saved TransD successfully to: {self.model_path}")
+                    self.save(self.model_path)
                     best_perf = test_perf
                     patience_counter = 0
                 else:
@@ -256,12 +216,6 @@ class TransD(BaseModel):
                 if (use_early_stopping and patience_counter >= patience):
                     logging.info('Early stopping triggered at epoch %d', epoch + 1)
                     break
-        if is_save_model:
-            metric_name = 'MRR' if 'MRR' in metrics else 'accuracy' if 'accuracy' in metrics else list(metrics.keys())[0]
-            print(f"[FINAL] Saving trained TransD with best {metric_name} {best_perf}.")
-            self.save(self.model_path)
-            print(f"[FINAL] Saved trained TransD successfully to: {self.model_path}")
-            return best_perf, self.model_path
         return best_perf, None
     
 class DistMultModule(BaseModule):
@@ -295,8 +249,6 @@ class DistMult(BaseModel):
         self.model_type = 'DistMult'
         self.model_config = config._config[self.model_type]
         self.model_path = os.path.join(self.task_dir, self.model_config.model_file)
-        print(f"Initializing DistMult with model file name: {self.model_config.model_file}")
-        print(f"Initialized DistMult with model path: {self.model_path}")
         self.n_epoch = self.model_config.n_epoch
         self.n_batch = self.model_config.n_batch
         self.weight_decay = self.model_config.lam / self.model_config.n_batch
@@ -312,10 +264,8 @@ class DistMult(BaseModel):
 
         head, relation, tail = train_data
         n_train = len(head)
-        
         optimizer_class = {'Adam': Adam, 'SGD': SGD, 'AdamW': AdamW, 'RMSprop': RMSprop, 'Adagrad': Adagrad}.get(optimizer_name, Adam)
         optimizer = optimizer_class(self.model.parameters(), weight_decay=self.weight_decay)
-    
         best_perf = 0.0
         patience_counter = 0
         for epoch in range(self.n_epoch):
@@ -325,7 +275,6 @@ class DistMult(BaseModel):
                 head = head[rand_idx]
                 relation = relation[rand_idx]
                 tail = tail[rand_idx]
-
                 head_corrupted, relation_corrupted, tail_corrupted = corrupter.corrupt(head, relation, tail)
                 head_corrupted = head_corrupted.to(self.device)
                 relation_corrupted = relation_corrupted.to(self.device)
@@ -334,52 +283,32 @@ class DistMult(BaseModel):
             for hs, rs, ts in batch_by_num(self.n_batch, head_corrupted, relation_corrupted, tail_corrupted, n_sample=n_train):
                 self.model.zero_grad()
                 label = torch.zeros(len(hs)).type(torch.LongTensor).to(self.device)
-                loss = torch.sum(self.model.softmax_loss(Variable(hs), Variable(rs), Variable(ts), label))
+                hs_var, rs_var, ts_var = Variable(hs), Variable(rs), Variable(ts)
+                softmax_loss = self.model.softmax_loss(hs_var, rs_var, ts_var, label)
+                loss = torch.sum(softmax_loss)
                 loss.backward()
-
                 optimizer.step()
                 epoch_loss += loss.item()
 
             logging.info('Epoch %d/%d, Loss=%f', epoch + 1, self.n_epoch, epoch_loss / n_train)
             if ((self.n_epoch >= self.epoch_per_test) and ((epoch + 1) % self.epoch_per_test == 0)):
-                metrics = tester()
-                # Support both link-prediction (MRR) and triple-classification (accuracy) metrics
-                if 'MRR' in metrics:
-                    test_perf = metrics['MRR']
-                    metric_name = 'MRR'
-                elif 'accuracy' in metrics:
-                    test_perf = metrics['accuracy']
-                    metric_name = 'accuracy'
-                else:
-                    test_perf = list(metrics.values())[0]  # fallback to first metric
-                    metric_name = list(metrics.keys())[0]
-                
+                test_perf = tester()
                 if (test_perf > best_perf):
-                    if is_save_model:
-                        print(f"[CHECKPOINT] Saving DistMult at epoch {epoch + 1} with {metric_name} {test_perf}.")
-                        self.save(self.model_path)
-                        print(f"[CHECKPOINT] Saved DistMult successfully to: {self.model_path}")
+                    self.save(self.model_path)
                     best_perf = test_perf
                     patience_counter = 0
                 else:
                     patience_counter += 1
                     
                 if (use_early_stopping and patience_counter >= patience):
-                    logging.info('Early stopping triggered at epoch %d', epoch + 1)
+                    logging.info('Early stopping triggered at epoch %d (patience=%d)', epoch + 1, patience)
                     break
-        if is_save_model:
-            metric_name = 'MRR' if 'MRR' in metrics else 'accuracy' if 'accuracy' in metrics else list(metrics.keys())[0]
-            print(f"[FINAL] Saving trained DistMult with best {metric_name} {best_perf}.")
-            self.save(self.model_path)
-            print(f"[FINAL] Saved trained DistMult successfully to: {self.model_path}")
-            return best_perf, self.model_path
         return best_perf, None
 
 class ComplExModule(BaseModule):
     def __init__(self, n_entity, n_relation, config):
         super().__init__(n_entity, n_relation)
         self.model_type = 'ComplEx'
-
         self.sigma = 0.2
         self.dim = config.dim
         self.relation_re_embed = nn.Embedding(n_relation, config.dim)
@@ -430,13 +359,10 @@ class ComplEx(BaseModel):
            
         head, relation, tail = train_data
         n_train = len(head)
-        
         optimizer_class = {'Adam': Adam, 'SGD': SGD, 'AdamW': AdamW, 'RMSprop': RMSprop, 'Adagrad': Adagrad}.get(optimizer_name, Adam)
         optimizer = optimizer_class(self.model.parameters(), weight_decay=self.weight_decay)
-
         best_perf = 0.0
         patience_counter = 0
-
         for epoch in range(self.n_epoch):
             epoch_loss = 0
             if (epoch % self.sample_freq == 0):
@@ -444,7 +370,6 @@ class ComplEx(BaseModel):
                 head = head[rand_idx]
                 relation = relation[rand_idx]
                 tail = tail[rand_idx]
-
                 head_corrupted, relation_corrupted, tail_corrupted = corrupter.corrupt(head, relation, tail)
                 head_corrupted = head_corrupted.to(self.device)
                 relation_corrupted = relation_corrupted.to(self.device)
@@ -453,32 +378,17 @@ class ComplEx(BaseModel):
             for hs, rs, ts in batch_by_num(self.n_batch, head_corrupted, relation_corrupted, tail_corrupted, n_sample=n_train):
                 self.model.zero_grad()
                 label = torch.zeros(len(hs)).type(torch.LongTensor).to(self.device)
-
-                loss = torch.sum(self.model.softmax_loss(Variable(hs), Variable(rs), Variable(ts), label))
+                hs_var, rs_var, ts_var = Variable(hs), Variable(rs), Variable(ts)
+                softmax_loss = self.model.softmax_loss(hs_var, rs_var, ts_var, label)
+                loss = torch.sum(softmax_loss)
                 loss.backward()
-
                 optimizer.step()
                 epoch_loss += loss.item()
-
             logging.info('Epoch %d/%d, Loss=%f', epoch + 1, self.n_epoch, epoch_loss / n_train)
             if ((self.n_epoch >= self.epoch_per_test) and ((epoch + 1) % self.epoch_per_test == 0)):
-                metrics = tester()
-                # Support both link-prediction (MRR) and triple-classification (accuracy) metrics
-                if 'MRR' in metrics:
-                    test_perf = metrics['MRR']
-                    metric_name = 'MRR'
-                elif 'accuracy' in metrics:
-                    test_perf = metrics['accuracy']
-                    metric_name = 'accuracy'
-                else:
-                    test_perf = list(metrics.values())[0]  # fallback to first metric
-                    metric_name = list(metrics.keys())[0]
-                
+                test_perf = tester()               
                 if (test_perf > best_perf):
-                    if is_save_model:
-                        print(f"[CHECKPOINT] Saving ComplEx at epoch {epoch + 1} with {metric_name} {test_perf}.")
-                        self.save(self.model_path)
-                        print(f"[CHECKPOINT] Saved ComplEx successfully to: {self.model_path}")
+                    self.save(self.model_path)
                     best_perf = test_perf
                     patience_counter = 0
                 else:
@@ -487,10 +397,4 @@ class ComplEx(BaseModel):
                 if (use_early_stopping and patience_counter >= patience):
                     logging.info('Early stopping triggered at epoch %d', epoch + 1)
                     break
-        if is_save_model:
-            metric_name = 'MRR' if 'MRR' in metrics else 'accuracy' if 'accuracy' in metrics else list(metrics.keys())[0]
-            print(f"[FINAL] Saving trained ComplEx with best {metric_name} {best_perf}.")
-            self.save(self.model_path)
-            print(f"[FINAL] Saved trained ComplEx successfully to: {self.model_path}")
-            return best_perf, self.model_path
         return best_perf, None
