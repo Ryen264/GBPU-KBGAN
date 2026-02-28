@@ -57,10 +57,8 @@ class TransE(BaseModel):
         self.model = TransEModule(self.n_entity, self.n_relation, self.model_config)
         self.model.to(self.device)
 
-
     def train(self, train_data: Tuple[torch.Tensor, torch.Tensor, torch.Tensor], corrupter, tester,
-              use_early_stopping: bool=False, patience: int=10, optimizer_name: str='Adam',
-              use_gpu: bool=None) -> Tuple[float, Optional[str]]:
+              optimizer_name: str='Adam', early_stop_patience: int=-1, use_gpu: bool=None) -> Tuple[float, Optional[str]]:
         if use_gpu is not None:
             self.set_device(use_gpu)
 
@@ -102,8 +100,8 @@ class TransE(BaseModel):
                 else:
                     patience_counter += 1
 
-                if (use_early_stopping and patience_counter >= patience):
-                    logging.info('Early stopping triggered at epoch %d (patience=%d)', epoch + 1, patience)
+                if (early_stop_patience > 0 and patience_counter >= early_stop_patience):
+                    logging.info('Early stopping triggered at epoch %d (patience=%d)', epoch + 1, early_stop_patience)
                     break
         return best_perf, None
     
@@ -171,8 +169,7 @@ class TransD(BaseModel):
         self.model.to(self.device)
 
     def train(self, train_data: tuple, corrupter, tester,
-              use_early_stopping: bool=False, patience: int=10, optimizer_name: str='Adam',
-              use_gpu: bool = None) -> Tuple[float, Optional[str]]:
+              optimizer_name: str='Adam', early_stop_patience: int=-1, use_gpu: bool = None) -> Tuple[float, Optional[str]]:
         if use_gpu is not None:
             self.set_device(use_gpu)
          
@@ -215,7 +212,7 @@ class TransD(BaseModel):
                 else:
                     patience_counter += 1
                     
-                if (use_early_stopping and patience_counter >= patience):
+                if (early_stop_patience > 0 and patience_counter >= early_stop_patience):
                     logging.info('Early stopping triggered at epoch %d', epoch + 1)
                     break
         return best_perf, None
@@ -259,10 +256,8 @@ class DistMult(BaseModel):
         self.model = DistMultModule(self.n_entity, self.n_relation, self.model_config)
         self.model.to(self.device)
 
-
     def train(self, train_data: tuple, corrupter, tester,
-              use_early_stopping: bool=False, patience: int=10, optimizer_name: str='Adam',
-              use_gpu: bool=None) -> Tuple[float, Optional[str]]:
+              optimizer_name: str='Adam', early_stop_patience: int=-1, use_gpu: bool=None) -> Tuple[float, Optional[str]]:
         if use_gpu is not None:
             self.set_device(use_gpu)
          
@@ -358,8 +353,7 @@ class ComplEx(BaseModel):
         self.model.to(self.device)
 
     def train(self, train_data: tuple, corrupter, tester,
-              use_early_stopping: bool=False, patience: int=10, optimizer_name: str='Adam',
-              use_gpu: bool=None) -> Tuple[float, Optional[str]]:
+              optimizer_name: str='Adam', early_stop_patience: int=-1, use_gpu: bool=None) -> Tuple[float, Optional[str]]:
         if use_gpu is not None:
             self.set_device(use_gpu)
             
@@ -401,7 +395,7 @@ class ComplEx(BaseModel):
                 else:
                     patience_counter += 1
                     
-                if (use_early_stopping and patience_counter >= patience):
+                if (early_stop_patience > 0 and patience_counter >= early_stop_patience):
                     logging.info('Early stopping triggered at epoch %d', epoch + 1)
                     break
         return best_perf, None

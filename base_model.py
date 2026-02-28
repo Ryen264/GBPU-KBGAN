@@ -184,7 +184,7 @@ class BaseModel(object):
                     mrr_total / count, mr_total / count, hit10_total / count)
         return mrr_total / count
     
-    def evaluate_on_ranking(self, test_data: list, n_entity: int, heads: dict, tails: dict, filt: bool=True, k_list: list=[1, 3, 10]) -> dict:
+    def test_link(self, test_data: list, n_entity: int, heads: dict, tails: dict, filt: bool=True, k_list: list=[1, 3, 10]) -> dict:
         mr_total = mrr_total = 0.0
         hits_total = [0] * len(k_list)
         test_data_no_label = test_data[:3]
@@ -240,10 +240,10 @@ class BaseModel(object):
         hits_rate = [hit_total / count for hit_total in hits_total]
         
         metrics = {}
-        metrics['MR'] = mr_rate
-        metrics['MRR'] = mrr_rate
+        metrics['mr'] = mr_rate
+        metrics['mrr'] = mrr_rate
         for i in range(len(k_list)):
-            metrics[f'Hit@{k_list[i]}'] = hits_rate[i]
+            metrics[f'hits{k_list[i]}'] = hits_rate[i]
 
         metrics_str = f"Ranking metrics: {metrics}\n"
         logging.info(metrics_str)
