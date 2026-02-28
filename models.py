@@ -13,7 +13,7 @@ from datasets import batch_by_num
 from base_model import BaseModel, BaseModule
 
 class TransEModule(BaseModule):
-    def __init__(self, n_entity, n_relation, config):
+    def __init__(self, n_entity: int, n_relation: int, config: config.Config):
         super().__init__(n_entity, n_relation)
 
         self.p = config.p
@@ -29,24 +29,24 @@ class TransEModule(BaseModule):
             param.data.normal_(1 / param.size(1) ** 0.5)
             param.data.renorm_(2, 0, 1)
 
-    def forward(self, head, relation, tail) -> torch.Tensor:
+    def forward(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
         return torch.norm(self.entity_embed(tail) - self.entity_embed(head) - self.relation_embed(relation) + 1e-30, p=self.p, dim=-1)
 
-    def dist(self, head, relation, tail) -> torch.Tensor:
+    def dist(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
         return self.forward(head, relation, tail)
 
-    def score(self, head, relation, tail) -> torch.Tensor:
+    def score(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
         return self.forward(head, relation, tail)
 
-    def prob_logit(self, head, relation, tail) -> torch.Tensor:
+    def prob_logit(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
         return -self.forward(head, relation ,tail) / self.temp
 
-    def constraint(self):
+    def constraint(self) -> None:
         self.entity_embed.weight.data.renorm_(2, 0, 1)
         self.relation_embed.weight.data.renorm_(2, 0, 1)
 
 class TransE(BaseModel):
-    def __init__(self, n_entity, n_relation, use_gpu = None):
+    def __init__(self, n_entity: int, n_relation: int, use_gpu: bool=None):
         super().__init__(n_entity, n_relation, use_gpu)
         self.model_type = 'TransE'
         self.model_config = config._config[self.model_type]
@@ -58,19 +58,19 @@ class TransE(BaseModel):
         self.model.to(self.device)
 
 
-    def train(self, train_data, corrupter, tester,
-              use_early_stopping=False, patience=10, optimizer_name='Adam',
-              use_gpu: bool = None, is_save_model: bool = True) -> Tuple[float, Optional[str]]:
-        
+    def train(self, train_data: Tuple[torch.Tensor, torch.Tensor, torch.Tensor], corrupter, tester,
+              use_early_stopping: bool=False, patience: int=10, optimizer_name: str='Adam',
+              use_gpu: bool=None) -> Tuple[float, Optional[str]]:
+        if use_gpu is not None:
+            self.set_device(use_gpu)
+
         head, relation, tail = train_data
         n_train = len(head)
-        
         optimizer_class = {'Adam': Adam, 'SGD': SGD, 'AdamW': AdamW, 'RMSprop': RMSprop, 'Adagrad': Adagrad}.get(optimizer_name, Adam)
         optimizer = optimizer_class(self.model.parameters())
 
         best_perf = 0.0
         patience_counter = 0
-
         for epoch in range(self.n_epoch):
             epoch_loss = 0
             rand_idx = torch.randperm(n_train)
@@ -108,7 +108,7 @@ class TransE(BaseModel):
         return best_perf, None
     
 class TransDModule(BaseModule):
-    def __init__(self, n_entity, n_relation, config):
+    def __init__(self, n_entity: int, n_relation: int, config: config.Config):
         super().__init__(n_entity, n_relation)
         self.model_type = 'TransD'
         self.margin = config.margin
@@ -126,20 +126,20 @@ class TransDModule(BaseModule):
             param.data.normal_(1 / param.size(1) ** 0.5)
             param.data.renorm_(2, 0, 1)
 
-    def forward(self, head, relation, tail) -> torch.Tensor:
+    def forward(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
         head_proj = self.entity_embed(head) +\
                    torch.sum(self.proj_entity_embed(head) * self.entity_embed(head), dim=-1, keepdim=True) * self.proj_relation_embed(relation)
         tail_proj = self.entity_embed(tail) +\
                    torch.sum(self.proj_entity_embed(tail) * self.entity_embed(tail), dim=-1, keepdim=True) * self.proj_relation_embed(relation)
         return torch.norm(tail_proj - self.relation_embed(relation) - head_proj + 1e-30, p=self.p, dim=-1)
 
-    def dist(self, head, relation, tail) -> torch.Tensor:
+    def dist(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
         return self.forward(head, relation, tail)
 
-    def score(self, head, relation, tail) -> torch.Tensor:
+    def score(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
         return self.forward(head, relation, tail)
 
-    def prob_logit(self, head, relation, tail) -> torch.Tensor:
+    def prob_logit(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
         return -self.forward(head, relation, tail) / self.temp
 
     def constraint(self) -> None:
@@ -147,7 +147,7 @@ class TransDModule(BaseModule):
             param.data.renorm_(2, 0, 1)
 
 class TransD(BaseModel):
-    def __init__(self, n_entity, n_relation, use_gpu = None):
+    def __init__(self, n_entity: int, n_relation: int, use_gpu: bool=None):
         super().__init__(n_entity, n_relation, use_gpu)
         self.model_type = 'TransD'
         self.model_config = config._config[self.model_type]
@@ -159,7 +159,7 @@ class TransD(BaseModel):
         self.model = TransDModule(self.n_entity, self.n_relation, self.model_config)
         self.model.to(self.device)
 
-    def load_vec(self, vecpath) -> None:
+    def load_vec(self, vecpath: str) -> None:
         entity_mat = np.loadtxt(os.path.join(vecpath, 'entity2vec.vec'))
         self.model.entity_embed.weight.data.copy_(torch.from_numpy(entity_mat))
         relation_mat = np.loadtxt(os.path.join(vecpath, 'relation2vec.vec'))
@@ -170,17 +170,19 @@ class TransD(BaseModel):
         self.model.proj_entity_embed.weight.data.copy_(torch.from_numpy(a_mat[n_relation:, :]))
         self.model.to(self.device)
 
-    def train(self, train_data, corrupter, tester,
-              use_early_stopping=False, patience=10, optimizer_name='Adam',
-              use_gpu: bool = None, is_save_model: bool = True) -> Tuple[float, Optional[str]]:
-        
+    def train(self, train_data: tuple, corrupter, tester,
+              use_early_stopping: bool=False, patience: int=10, optimizer_name: str='Adam',
+              use_gpu: bool = None) -> Tuple[float, Optional[str]]:
+        if use_gpu is not None:
+            self.set_device(use_gpu)
+         
         head, relation, tail = train_data
         n_train = len(head)
         optimizer_class = {'Adam': Adam, 'SGD': SGD, 'AdamW': AdamW, 'RMSprop': RMSprop, 'Adagrad': Adagrad}.get(optimizer_name, Adam)
         optimizer = optimizer_class(self.model.parameters())
+        
         best_perf = 0.0
         patience_counter = 0
-        
         for epoch in range(self.n_epoch):
             epoch_loss = 0
             rand_idx = torch.randperm(n_train)
@@ -219,8 +221,8 @@ class TransD(BaseModel):
         return best_perf, None
     
 class DistMultModule(BaseModule):
-    def __init__(self, n_entity, n_relation, config):
-        super().__init__(n_entity, n_relation, )
+    def __init__(self, n_entity: int, n_relation: int, config: config.Config):
+        super().__init__(n_entity, n_relation)
         self.model_type = 'DistMult'
         self.model_config = config
 
@@ -231,20 +233,20 @@ class DistMultModule(BaseModule):
         self.entity_embed.weight.data.div_((self.model_config.dim / sigma ** 2) ** (1 / 6))
         self.is_distance_based = False
 
-    def forward(self, head, relation, tail) -> torch.Tensor:
+    def forward(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
         return torch.sum(self.entity_embed(tail) * self.entity_embed(head) * self.relation_embed(relation), dim=-1)
 
-    def dist(self, head, relation, tail) -> torch.Tensor:
+    def dist(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
         return -self.forward(head, relation, tail)
     
-    def score(self, head, relation, tail) -> torch.Tensor:
+    def score(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
         return -self.forward(head, relation, tail)
 
-    def prob_logit(self, head, relation, tail) -> torch.Tensor:
+    def prob_logit(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
         return self.forward(head, relation, tail)
 
 class DistMult(BaseModel):
-    def __init__(self, n_entity, n_relation, use_gpu = None):
+    def __init__(self, n_entity: int, n_relation: int, use_gpu: bool=None):
         super().__init__(n_entity, n_relation, use_gpu)
         self.model_type = 'DistMult'
         self.model_config = config._config[self.model_type]
@@ -258,14 +260,17 @@ class DistMult(BaseModel):
         self.model.to(self.device)
 
 
-    def train(self, train_data, corrupter, tester,
-              use_early_stopping=False, patience=10, optimizer_name='Adam',
-              use_gpu: bool = None, is_save_model: bool = True) -> Tuple[float, Optional[str]]:
-
+    def train(self, train_data: tuple, corrupter, tester,
+              use_early_stopping: bool=False, patience: int=10, optimizer_name: str='Adam',
+              use_gpu: bool=None) -> Tuple[float, Optional[str]]:
+        if use_gpu is not None:
+            self.set_device(use_gpu)
+         
         head, relation, tail = train_data
         n_train = len(head)
         optimizer_class = {'Adam': Adam, 'SGD': SGD, 'AdamW': AdamW, 'RMSprop': RMSprop, 'Adagrad': Adagrad}.get(optimizer_name, Adam)
         optimizer = optimizer_class(self.model.parameters(), weight_decay=self.weight_decay)
+        
         best_perf = 0.0
         patience_counter = 0
         for epoch in range(self.n_epoch):
@@ -306,7 +311,7 @@ class DistMult(BaseModel):
         return best_perf, None
 
 class ComplExModule(BaseModule):
-    def __init__(self, n_entity, n_relation, config):
+    def __init__(self, n_entity: int, n_relation: int, config: config.Config):
         super().__init__(n_entity, n_relation)
         self.model_type = 'ComplEx'
         self.sigma = 0.2
@@ -322,23 +327,23 @@ class ComplExModule(BaseModule):
         for param in self.parameters():
             param.data.div_((self.dim / self.sigma ** 2) ** (1 / 6))
 
-    def forward(self, head, relation, tail) -> torch.Tensor:
+    def forward(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
         return torch.sum(self.relation_re_embed(relation) * self.entity_re_embed(head) * self.entity_re_embed(tail), dim=-1) \
             + torch.sum(self.relation_re_embed(relation) * self.entity_im_embed(head) * self.entity_im_embed(tail), dim=-1) \
             + torch.sum(self.relation_im_embed(relation) * self.entity_re_embed(head) * self.entity_im_embed(tail), dim=-1) \
             - torch.sum(self.relation_im_embed(relation) * self.entity_im_embed(head) * self.entity_re_embed(tail), dim=-1)
 
-    def dist(self, head, relation, tail) -> torch.Tensor:
+    def dist(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
         return -self.forward(head, relation, tail)
     
-    def score(self, head, relation, tail) -> torch.Tensor:
+    def score(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
         return -self.forward(head, relation, tail)
 
-    def prob_logit(self, head, relation, tail) -> torch.Tensor:
+    def prob_logit(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
         return self.forward(head, relation, tail)
 
 class ComplEx(BaseModel):
-    def __init__(self, n_entity, n_relation, use_gpu = None):
+    def __init__(self, n_entity: int, n_relation: int, use_gpu: bool=None):
         super().__init__(n_entity, n_relation, use_gpu)
         self.model_type = 'ComplEx'
         self.model_config = config._config[self.model_type]
@@ -352,15 +357,17 @@ class ComplEx(BaseModel):
         self.model = ComplExModule(self.n_entity, self.n_relation, self.model_config)
         self.model.to(self.device)
 
-
-    def train(self, train_data, corrupter, tester,
-              use_early_stopping=False, patience=10, optimizer_name='Adam',
-              use_gpu: bool = None, is_save_model: bool = True) -> Tuple[float, Optional[str]]:
-           
+    def train(self, train_data: tuple, corrupter, tester,
+              use_early_stopping: bool=False, patience: int=10, optimizer_name: str='Adam',
+              use_gpu: bool=None) -> Tuple[float, Optional[str]]:
+        if use_gpu is not None:
+            self.set_device(use_gpu)
+            
         head, relation, tail = train_data
         n_train = len(head)
         optimizer_class = {'Adam': Adam, 'SGD': SGD, 'AdamW': AdamW, 'RMSprop': RMSprop, 'Adagrad': Adagrad}.get(optimizer_name, Adam)
         optimizer = optimizer_class(self.model.parameters(), weight_decay=self.weight_decay)
+        
         best_perf = 0.0
         patience_counter = 0
         for epoch in range(self.n_epoch):

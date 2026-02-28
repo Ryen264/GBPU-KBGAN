@@ -3,39 +3,39 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as nnf
 from torch.optim import Adam
-from typing import Tuple, Optional
 import logging
 import os
 
 import config
 from datasets import batch_by_size
-from metrics import ranking_metrics, mrr_mr_hitk, classification_metrics
+from metrics import ranking_metrics, mrr_mr_hitk
 
 class BaseModule(nn.Module):
     def __init__(self, n_entity: int, n_relation: int):
         super().__init__()
         
-    def score(self, head, relation, tail) -> torch.Tensor:
+    def score(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
         raise NotImplementedError
     
-    def dist(self, head, relation, tail) -> torch.Tensor:
+    def dist(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
         raise NotImplementedError
 
-    def prob_logit(self, head, relation, tail) -> torch.Tensor:
+    def prob_logit(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
         raise NotImplementedError
 
-    def prob(self, head, relation, tail) -> torch.Tensor:
+    def prob(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
         return nnf.softmax(self.prob_logit(head, relation, tail), dim=-1)
     
     def constraint(self) -> None:
         pass
     
-    def pair_loss(self, head, relation, tail, head_bad, tail_bad) -> torch.Tensor:
-        d_good = self.dist(head, relation, tail)
+    def pair_loss(self, head_good: torch.Tensor, relation: torch.Tensor, tail_good: torch.Tensor,
+                  head_bad: torch.Tensor, tail_bad: torch.Tensor) -> torch.Tensor:
+        d_good = self.dist(head_good, relation, tail_good)
         d_bad = self.dist(head_bad, relation, tail_bad)
-        return nnf.relu(self.margin + d_good - d_bad)
+        return nnf.relu(d_good - d_bad + self.margin)
     
-    def softmax_loss(self, head, relation, tail, truth) -> torch.Tensor:
+    def softmax_loss(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor, truth: torch.Tensor) -> torch.Tensor:
         probs = self.prob(head, relation, tail)
         n = probs.size(0)
         row_idx = torch.arange(n, device=probs.device)
@@ -55,7 +55,7 @@ class BaseModel(object):
         self.model_type = None      # to be set by subclasses, type: str
         self.model_config = None    # to be set by subclasses, type: config.Config
         self.model_path = None 
-        self.model = None # type: BaseModule
+        self.model = None           # type: BaseModule
         self.weight_decay = 0
         if use_gpu is None:
             use_gpu = torch.cuda.is_available()
@@ -67,13 +67,15 @@ class BaseModel(object):
         self.task_dir = os.path.join('.', 'models', config._config.dataset, config._config.task, 'components')
         os.makedirs(self.task_dir, exist_ok=True)
 
-    def save(self, filename) -> str:
+    def save(self, filename: str) -> str:
         torch.save(self.model.state_dict(), filename)
+        return filename
 
-    def load(self, filename):
+    def load(self, filename: str) -> None:
         self.model.load_state_dict(torch.load(filename, map_location=self.device))
 
-    def gen_step(self, head, relation, tail, n_sample=1, temperature=1.0, train=True):
+    def gen_step(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor,
+                 n_sample: int=1, temperature: float=1.0, train: bool=True):
         if not hasattr(self, 'opt'):
             self.opt = Adam(self.model.parameters(), weight_decay=self.weight_decay)
 
@@ -105,28 +107,30 @@ class BaseModel(object):
             self.model.constraint()
         yield None
 
-    def dis_step(self, src, rel, dst, src_fake, dst_fake, train=True):
+    def dis_step(self, head_good: torch.Tensor, relation: torch.Tensor, tail_good: torch.Tensor,
+                 head_bad: torch.Tensor, tail_bad: torch.Tensor, train=True):
         if not hasattr(self, 'opt'):
             self.opt = Adam(self.model.parameters(), weight_decay=self.weight_decay)
-        head_var = Variable(src.to(self.device))
-        relation_var = Variable(rel.to(self.device))
-        tail_var = Variable(dst.to(self.device))
+        head_var = Variable(head_good.to(self.device))
+        relation_var = Variable(relation.to(self.device))
+        tail_var = Variable(tail_good.to(self.device))
 
-        head_fake_var = Variable(src_fake.to(self.device))
-        tail_fake_var = Variable(dst_fake.to(self.device))
-        losses = self.model.pair_loss(head_var, relation_var, tail_var, head_fake_var, tail_fake_var)
-        fake_scores = self.model.score(head_fake_var, relation_var, tail_fake_var)
+        head_bad_var = Variable(head_bad.to(self.device))
+        tail_bad_var = Variable(tail_bad.to(self.device))
+        losses = self.model.pair_loss(head_var, relation_var, tail_var, head_bad_var, tail_bad_var)
+        fake_scores = self.model.score(head_bad_var, relation_var, tail_bad_var)
 
         if train:
             self.model.zero_grad()
             torch.sum(losses).backward()
             self.opt.step()
-            self.model .constraint()
+            self.model.constraint()
         return losses.data, -fake_scores.data
-    def test_link(self, test_data, n_entity, heads, tails, filt=True):
-        mrr_tot = 0
-        mr_tot = 0
-        hit10_tot = 0
+    
+    def test_link(self, test_data: list, n_entity: int, heads: dict, tails: dict, filt: bool=True) -> float:
+        mrr_total = 0
+        mr_total = 0
+        hit10_total = 0
         count = 0
         with torch.no_grad():  # Thay volatile=True
             for batch_s, batch_r, batch_t in batch_by_size(config().test_batch_size, *test_data):
@@ -137,7 +141,7 @@ class BaseModel(object):
                 src_var = batch_s.unsqueeze(1).expand(batch_size, n_entity).cuda()
                 dst_var = batch_t.unsqueeze(1).expand(batch_size, n_entity).cuda()
                 
-                all_var = torch.arange(0, n_entity).unsqueeze(0).expand(batch_size, n_entity        ).long().cuda()
+                all_var = torch.arange(0, n_entity).unsqueeze(0).expand(batch_size, n_entity).long().cuda()
                 
                 # Tính điểm
                 batch_dst_scores = self.mdl.score(src_var, rel_var, all_var)
@@ -165,24 +169,22 @@ class BaseModel(object):
                             src_scores[s_id] = tmp
                     
                     mrr, mr, hit10 = mrr_mr_hitk(dst_scores, t_id)
-                    mrr_tot += mrr
-                    mr_tot += mr
-                    hit10_tot += hit10
+                    mrr_total += mrr
+                    mr_total += mr
+                    hit10_total += hit10
 
                     mrr, mr, hit10 = mrr_mr_hitk(src_scores, s_id)
-                    mrr_tot += mrr
-                    mr_tot += mr
-                    hit10_tot += hit10
+                    mrr_total += mrr
+                    mr_total += mr
+                    hit10_total += hit10
 
                     count += 2
 
         logging.info('Test_MRR=%f, Test_MR=%f, Test_H@10=%f', 
-                    mrr_tot / count, mr_tot / count, hit10_tot / count)
-        return mrr_tot / count
+                    mrr_total / count, mr_total / count, hit10_total / count)
+        return mrr_total / count
     
-    def evaluate_on_ranking(self, test_data, n_entity, heads, tails, filt=True, k_list=None) -> dict:
-        if k_list is None:
-            k_list = [1, 3, 10]
+    def evaluate_on_ranking(self, test_data: list, n_entity: int, heads: dict, tails: dict, filt: bool=True, k_list: list=[1, 3, 10]) -> dict:
         mr_total = mrr_total = 0.0
         hits_total = [0] * len(k_list)
         test_data_no_label = test_data[:3]
@@ -246,10 +248,3 @@ class BaseModel(object):
         metrics_str = f"Ranking metrics: {metrics}\n"
         logging.info(metrics_str)
         return metrics
-    
-
-    
-
-    
-    
-    

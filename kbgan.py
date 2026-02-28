@@ -9,6 +9,7 @@ from typing import Generator, Tuple, Optional
 from datasets import batch_by_num, BernCorrupterMulti, BernCorrupter
 from models import TransE, TransD, DistMult, ComplEx
 import config
+import metrics
 
 class Component():
     def __init__(self, role: str, model_type: str, n_entity: int, n_relation: int):
@@ -27,6 +28,9 @@ class Component():
             self.model_type = model_type
         else:
             raise ValueError(f"Input model type should be in list [\"TransE\", \"TransD\", \"DistMult\", \"ComplEx\"]!")
+
+        # self.model_path = None
+        # self.model_config = config._config[self.model_type]
 
         self.use_gpu = (config.device.type == 'cuda')
         if self.model_type == 'TransE':
@@ -52,11 +56,11 @@ class Component():
         elif self.model_type == "ComplEx":
             self.model = ComplEx(self.model.n_entity, self.model.n_relation, use_gpu=self.use_gpu)
         self.model.load(model_path)
+        # self.model_path = model_path
         print(f"Loaded component successfully by: {self.model.model_path}")
 
     def train(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data: tuple,
-              use_early_stopping: bool=False, patience: int=10, optimizer_name: str='Adam',
-              is_save_model: bool=True) -> Tuple[float, Optional[str]]:    
+              optimizer_name: str='Adam', early_stopping_patience: int=-1, is_save_model: bool=True) -> Tuple[float, Optional[str]]:    
         config.overwrite_config_with_args(["--log.prefix=" + self.model_type + '_'])
         config.logger_init()
 
@@ -76,9 +80,10 @@ class Component():
             raise ValueError(f"Unsupported task: {config._config.task}")
 
         print(f'Training component: {self.model_type} model.')
+        use_early_stopping = (early_stopping_patience > 0)
         best_perf, model_path = self.model.train(
             train_data, corrupter, tester,
-            use_early_stopping=use_early_stopping, patience=patience, optimizer_name=optimizer_name,
+            use_early_stopping=use_early_stopping, patience=early_stopping_patience, optimizer_name=optimizer_name,
             use_gpu=self.use_gpu, is_save_model=is_save_model)
         print(f'Trained component successfully: {self.model_type} model.')
         if is_save_model:
@@ -162,14 +167,13 @@ class Component():
         fake_scores = self.model.model.score(head_fake_var, relation_var, tail_fake_var)
                 
         # Backward pass: update discriminator
-        # if train:
-        #     #self.model._ensure_optimizer()
-        #     self.model.model.zero_grad()
+        if train:
+            #self.model._ensure_optimizer()
+            self.model.model.zero_grad()
 
-        #     torch.sum(losses).backward()
-
-        #     self.model.opt.step()
-        #     self.model.model.constraint()
+            torch.sum(losses).backward()
+            self.model.opt.step()
+            self.model.model.constraint()
         
         return losses.data, -fake_scores.data.detach() # Rewards for generator are negative fake scores
 
