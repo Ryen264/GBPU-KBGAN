@@ -43,7 +43,7 @@ class BaseModule(nn.Module):
         return -truth_probs
     
 class BaseModel(object):
-    def __init__(self, n_entity: int, n_relation: int, use_gpu: bool = None):
+    def __init__(self, n_entity: int, n_relation: int, use_gpu: bool=None):
         """
         BaseModel now supports selecting device and storing n_entity, n_relation, config at runtime.
         - If `use_gpu is None`, it will use the device selected by `config` module.
@@ -108,7 +108,7 @@ class BaseModel(object):
         yield None
 
     def dis_step(self, head_good: torch.Tensor, relation: torch.Tensor, tail_good: torch.Tensor,
-                 head_bad: torch.Tensor, tail_bad: torch.Tensor, train=True):
+                 head_bad: torch.Tensor, tail_bad: torch.Tensor, train: bool=True):
         if not hasattr(self, 'opt'):
             self.opt = Adam(self.model.parameters(), weight_decay=self.weight_decay)
         head_var = Variable(head_good.to(self.device))
@@ -243,7 +243,7 @@ class BaseModel(object):
         metrics['mr'] = mr_rate
         metrics['mrr'] = mrr_rate
         for i in range(len(k_list)):
-            metrics[f'hits{k_list[i]}'] = hits_rate[i]
+            metrics[f'hit@{k_list[i]}'] = hits_rate[i]
 
         metrics_str = f"Ranking metrics: {metrics}\n"
         logging.info(metrics_str)
