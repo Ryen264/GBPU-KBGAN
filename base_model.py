@@ -8,7 +8,7 @@ import os
 
 import config
 from datasets import batch_by_size
-from metrics import ranking_metrics, mrr_mr_hitk
+from metrics import ranking_metrics
 
 class BaseModule(nn.Module):
     def __init__(self, n_entity: int, n_relation: int):
@@ -57,9 +57,9 @@ class BaseModel(object):
         self.model_path = None 
         self.model = None           # type: BaseModule
         self.weight_decay = 0
+        
         if use_gpu is None:
             use_gpu = torch.cuda.is_available()
-
         if use_gpu and not torch.cuda.is_available():
             raise RuntimeError("CUDA requested but not available.")
 
@@ -99,11 +99,9 @@ class BaseModel(object):
         # Backward pass: update generator with REINFORCE
         if train:
             self.model.zero_grad()
-
             log_probs = nnf.log_softmax(logits)
             reinforce_loss = -torch.sum(Variable(rewards) * log_probs[row_idx.cuda(), sample_idx.data])
             reinforce_loss.backward()
-
             self.opt.step()
             self.model.constraint()
         yield None
@@ -112,13 +110,14 @@ class BaseModel(object):
                  head_bad: torch.Tensor, tail_bad: torch.Tensor, train: bool=True):
         if not hasattr(self, 'opt'):
             self.opt = Adam(self.model.parameters(), weight_decay=self.weight_decay)
-        head_var = Variable(head_good.to(self.device))
-        relation_var = Variable(relation.to(self.device))
-        tail_var = Variable(tail_good.to(self.device))
 
+        head_good_var = Variable(head_good.to(self.device))
+        relation_var = Variable(relation.to(self.device))
+        tail_good_var = Variable(tail_good.to(self.device))
         head_bad_var = Variable(head_bad.to(self.device))
         tail_bad_var = Variable(tail_bad.to(self.device))
-        losses = self.model.pair_loss(head_var, relation_var, tail_var, head_bad_var, tail_bad_var)
+
+        losses = self.model.pair_loss(head_good_var, relation_var, tail_good_var, head_bad_var, tail_bad_var)
         fake_scores = self.model.score(head_bad_var, relation_var, tail_bad_var)
 
         if train:
@@ -128,64 +127,7 @@ class BaseModel(object):
             self.model.constraint()
         return losses.data, -fake_scores.data
     
-    def test_link(self, test_data: list, n_entity: int, heads: dict, tails: dict, filt: bool=True) -> float:
-        mrr_total = 0
-        mr_total = 0
-        hit10_total = 0
-        count = 0
-        with torch.no_grad():  # Thay volatile=True
-            for batch_s, batch_r, batch_t in batch_by_size(config().test_batch_size, *test_data):
-                batch_size = batch_s.size(0)
-                
-                # Không cần Variable, tensor bình thường là được
-                rel_var = batch_r.unsqueeze(1).expand(batch_size, n_entity).cuda()
-                src_var = batch_s.unsqueeze(1).expand(batch_size, n_entity).cuda()
-                dst_var = batch_t.unsqueeze(1).expand(batch_size, n_entity).cuda()
-                
-                all_var = torch.arange(0, n_entity).unsqueeze(0).expand(batch_size, n_entity).long().cuda()
-                
-                # Tính điểm
-                batch_dst_scores = self.mdl.score(src_var, rel_var, all_var)
-                batch_src_scores = self.mdl.score(all_var, rel_var, dst_var)
-                
-                # Convert to numpy if needed
-                batch_dst_scores = batch_dst_scores.detach()
-                batch_src_scores = batch_src_scores.detach()
-
-                for s, r, t, dst_scores, src_scores in zip(batch_s, batch_r, batch_t, batch_dst_scores, batch_src_scores):
-                    s_id, r_id, t_id = s.item(), r.item(), t.item()
-                    
-                    if filt:
-                        key_dst = (s_id, r_id)
-                        key_src = (t_id, r_id)
-                        
-                        if key_dst in tails and tails[key_dst]._nnz() > 1:
-                            tmp = dst_scores[t_id].item()
-                            dst_scores += tails[key_dst].cuda() * 1e30
-                            dst_scores[t_id] = tmp
-                        
-                        if key_src in heads and heads[key_src]._nnz() > 1:
-                            tmp = src_scores[s_id].item()
-                            src_scores += heads[key_src].cuda() * 1e30
-                            src_scores[s_id] = tmp
-                    
-                    mrr, mr, hit10 = mrr_mr_hitk(dst_scores, t_id)
-                    mrr_total += mrr
-                    mr_total += mr
-                    hit10_total += hit10
-
-                    mrr, mr, hit10 = mrr_mr_hitk(src_scores, s_id)
-                    mrr_total += mrr
-                    mr_total += mr
-                    hit10_total += hit10
-
-                    count += 2
-
-        logging.info('Test_MRR=%f, Test_MR=%f, Test_H@10=%f', 
-                    mrr_total / count, mr_total / count, hit10_total / count)
-        return mrr_total / count
-    
-    def test_link(self, test_data: list, n_entity: int, heads: dict, tails: dict, filt: bool=True, k_list: list=[1, 3, 10]) -> dict:
+    def test_link(self, test_data: list, heads: dict, tails: dict, filt: bool=True, k_list: list=[1, 3, 10]) -> dict:
         mr_total = mrr_total = 0.0
         hits_total = [0] * len(k_list)
         test_data_no_label = test_data[:3]
@@ -194,10 +136,10 @@ class BaseModel(object):
             for batch_head, batch_relation, batch_tail in batch_by_size(config._config.test_batch_size, *test_data_no_label):
                 batch_size = batch_head.size(0)
 
-                all_var = torch.arange(0, n_entity).unsqueeze(0).expand(batch_size, n_entity).long().to(self.device)
-                head_var = batch_head.unsqueeze(1).expand(batch_size, n_entity).to(self.device)
-                relation_var = batch_relation.unsqueeze(1).expand(batch_size, n_entity).to(self.device)
-                tail_var = batch_tail.unsqueeze(1).expand(batch_size, n_entity).to(self.device)
+                head_var = batch_head.unsqueeze(1).expand(batch_size, self.n_entity).to(self.device)
+                relation_var = batch_relation.unsqueeze(1).expand(batch_size, self.n_entity).to(self.device)
+                tail_var = batch_tail.unsqueeze(1).expand(batch_size, self.n_entity).to(self.device)
+                all_var = torch.arange(0, self.n_entity).unsqueeze(0).expand(batch_size, self.n_entity).long().to(self.device)
 
                 batch_head_scores = self.model.score(all_var, relation_var, tail_var)
                 batch_tail_scores = self.model.score(head_var, relation_var, all_var)
@@ -220,8 +162,8 @@ class BaseModel(object):
                             tail_scores += tails[key_tail].to(self.device) * 1e30
                             tail_scores[tail_id] = tmp
 
-                    head_metrics = ranking_metrics(scores=head_scores, target=head_id, k_list=k_list)
-                    tail_metrics = ranking_metrics(scores=tail_scores, target=tail_id, k_list=k_list)
+                    head_metrics = ranking_metrics(head_scores, head_id, k_list=k_list)
+                    tail_metrics = ranking_metrics(tail_scores, tail_id, k_list=k_list)
 
                     head_mr = head_metrics['mr']
                     head_mrr = head_metrics['mrr']

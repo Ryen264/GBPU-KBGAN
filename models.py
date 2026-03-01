@@ -2,8 +2,7 @@ import torch
 import torch.nn as nn
 from torch.optim import Adam, SGD, AdamW, RMSprop, Adagrad
 from torch.autograd import Variable
-import torch.nn.functional as nnf
-from typing import Tuple, Optional
+from typing import Tuple
 import logging
 import os
 import numpy as np
@@ -15,12 +14,14 @@ from base_model import BaseModel, BaseModule
 class TransEModule(BaseModule):
     def __init__(self, n_entity: int, n_relation: int, config: config.Config):
         super().__init__(n_entity, n_relation)
-
-        self.p = config.p
-        self.margin = config.margin
-        self.temp = config.get('temp', 1)
-        self.relation_embed = nn.Embedding(n_relation, config.dim)
-        self.entity_embed = nn.Embedding(n_entity, config.dim)
+        self.model_type = 'TransE'
+        self.model_config = config._config[self.model_type]
+        self.dim = self.model_config.dim
+        self.p = self.model_config.p
+        self.margin = self.model_config.margin
+        self.temp = self.model_config.get('temp', 1)
+        self.relation_embed = nn.Embedding(n_relation, self.dim)
+        self.entity_embed = nn.Embedding(n_entity, self.dim)
         self.is_distance_based = True
         self.init_weight()
 
@@ -109,13 +110,15 @@ class TransDModule(BaseModule):
     def __init__(self, n_entity: int, n_relation: int, config: config.Config):
         super().__init__(n_entity, n_relation)
         self.model_type = 'TransD'
-        self.margin = config.margin
-        self.p = config.p
-        self.temp = config.get('temp', 1)
-        self.relation_embed = nn.Embedding(n_relation, config.dim)
-        self.entity_embed = nn.Embedding(n_entity, config.dim)
-        self.proj_relation_embed = nn.Embedding(n_relation, config.dim)
-        self.proj_entity_embed = nn.Embedding(n_entity, config.dim)
+        self.model_config = config._config[self.model_type]
+        self.margin = self.model_config.margin
+        self.p = self.model_config.p
+        self.temp = self.model_config.get('temp', 1)
+        self.dim = self.model_config.dim
+        self.relation_embed = nn.Embedding(n_relation, self.dim)
+        self.entity_embed = nn.Embedding(n_entity, self.dim)
+        self.proj_relation_embed = nn.Embedding(n_relation, self.dim)
+        self.proj_entity_embed = nn.Embedding(n_entity, self.dim)
         self.is_distance_based = True
         self.init_weight()
 
@@ -220,13 +223,13 @@ class DistMultModule(BaseModule):
     def __init__(self, n_entity: int, n_relation: int, config: config.Config):
         super().__init__(n_entity, n_relation)
         self.model_type = 'DistMult'
-        self.model_config = config
-
-        sigma = 0.2
-        self.relation_embed = nn.Embedding(n_relation, self.model_config.dim)
-        self.relation_embed.weight.data.div_((self.model_config.dim / sigma ** 2) ** (1 / 6))
-        self.entity_embed = nn.Embedding(n_entity, self.model_config.dim)
-        self.entity_embed.weight.data.div_((self.model_config.dim / sigma ** 2) ** (1 / 6))
+        self.model_config = config._config[self.model_type]
+        self.sigma = self.model_config.sigma
+        self.dim = self.model_config.dim
+        self.relation_embed = nn.Embedding(n_relation, self.dim)
+        self.relation_embed.weight.data.div_((self.dim / self.sigma ** 2) ** (1 / 6))
+        self.entity_embed = nn.Embedding(n_entity, self.dim)
+        self.entity_embed.weight.data.div_((self.dim / self.sigma ** 2) ** (1 / 6))
         self.is_distance_based = False
 
     def forward(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
@@ -249,7 +252,8 @@ class DistMult(BaseModel):
         self.model_path = os.path.join(self.task_dir, self.model_config.model_file)
         self.n_epoch = self.model_config.n_epoch
         self.n_batch = self.model_config.n_batch
-        self.weight_decay = self.model_config.lam / self.model_config.n_batch
+        self.lam = self.model_config.lam
+        self.weight_decay = self.lam / self.n_batch
         self.sample_freq = self.model_config.sample_freq
         self.epoch_per_test = self.model_config.epoch_per_test
         self.model = DistMultModule(self.n_entity, self.n_relation, self.model_config)
@@ -308,12 +312,13 @@ class ComplExModule(BaseModule):
     def __init__(self, n_entity: int, n_relation: int, config: config.Config):
         super().__init__(n_entity, n_relation)
         self.model_type = 'ComplEx'
-        self.sigma = 0.2
-        self.dim = config.dim
-        self.relation_re_embed = nn.Embedding(n_relation, config.dim)
-        self.relation_im_embed = nn.Embedding(n_relation, config.dim)
-        self.entity_re_embed = nn.Embedding(n_entity, config.dim)
-        self.entity_im_embed = nn.Embedding(n_entity, config.dim)
+        self.model_config = config._config[self.model_type]
+        self.sigma = self.model_config.sigma
+        self.dim = self.model_config.dim
+        self.relation_re_embed = nn.Embedding(n_relation, self.dim)
+        self.relation_im_embed = nn.Embedding(n_relation, self.dim)
+        self.entity_re_embed = nn.Embedding(n_entity, self.dim)
+        self.entity_im_embed = nn.Embedding(n_entity, self.dim)
         self.is_distance_based = False
         self.init_weight()
 
