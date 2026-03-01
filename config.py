@@ -81,9 +81,7 @@ def select_gpu() -> int:
         return None
 
     try:
-        nvidia_info = subprocess.run(
-            ['nvidia-smi'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True
-        )
+        nvidia_info = subprocess.run(['nvidia-smi'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
     except (FileNotFoundError, subprocess.CalledProcessError):
         logging.warning("nvidia-smi not found or failed. Running on CPU.")
         return None
@@ -140,18 +138,15 @@ def logger_init() -> None:
     console_handler.setFormatter(logging.Formatter('%(module)15s %(asctime)s %(message)s', datefmt='%H:%M:%S'))
     root_logger.addHandler(console_handler)
 
-    if (config().log.to_file):
-        log_dir = os.path.join('.', 'logs', config().dataset, config().task)
+    if (_config.log.to_file):
+        log_dir = os.path.join('.', 'logs', _config.dataset, _config.task)
         os.makedirs(log_dir, exist_ok=True)
-        log_filename = os.path.join(
-            log_dir,
-            _config.log.prefix + datetime.datetime.now().strftime("%m%d%H%M%S") + ".log"
-        )
+        log_filename = os.path.join(log_dir, _config.log.prefix + datetime.datetime.now().strftime("%m%d%H%M%S") + ".log")
         file_handler = logging.FileHandler(log_filename)
         file_handler.setFormatter(logging.Formatter('%(module)15s %(asctime)s %(message)s', datefmt='%H:%M:%S'))
         root_logger.addHandler(file_handler)
 
-    if config().log.dump_config:
+    if (_config.log.dump_config):
         dump_config()
 
 def log_step(label: str, start_ts: float) -> float:

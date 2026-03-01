@@ -60,8 +60,7 @@ class Component():
         print(f"Loaded component successfully by: {self.model_path}")
 
     def train(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data: tuple,
-              rank_class_balance: float = 5.0, use_early_stopping: bool=False, patience: int=10,
-              optimizer_name: str='Adam', is_save_model: bool=True) -> Tuple[float, Optional[str]]:    
+              optimizer_name: str='Adam', rank_class_balance: float = 5.0, early_stop_patience: int=-1) -> float:    
         config.overwrite_config_with_args(["--log.prefix=" + self.model_type + '_'])
         config.logger_init()
 
@@ -81,8 +80,7 @@ class Component():
 
         print(f'Training component: {self.model_type} model.')
         best_perf = self.model.train(train_data, corrupter, tester,
-                                    optimizer_name=optimizer_name, use_early_stopping=use_early_stopping, patience=patience,
-                                    use_gpu=use_gpu, is_save_model=is_save_model)
+                                    optimizer_name=optimizer_name, early_stop_patience=early_stop_patience, use_gpu=use_gpu)
         print(f'Trained component successfully: {self.model_type} model.')
         return best_perf
     
@@ -314,10 +312,10 @@ class Component():
                     predictions = np.where(scores_array > threshold, 1, 0).tolist()
                 
                 classification_metrics = metrics.classification_metrics(predictions, labels, scores=scores_list)
-                val_metric = classification_metrics.get(optimizing_metric, 0.0)
+                test_val = classification_metrics.get(optimizing_metric, 0.0)
                 
-                if val_metric > best_val:
-                    best_val = val_metric
+                if test_val > best_val:
+                    best_val = test_val
                     best_threshold = threshold
 
             logging.info(f"Optimal threshold: {best_threshold:.4f} ({optimizing_metric}={best_val:.4f})")
@@ -439,8 +437,7 @@ class KBGAN():
         return self.kbgan_path
 
     def train_components(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data_w_label: tuple,
-                rank_class_balance: float=5.0, use_early_stopping: bool=False, patience: int=10,
-                optimizer_name: str='Adam', is_save_components: bool=True) -> Tuple[float, Optional[str], float, Optional[str]]:        
+                optimizer_name: str='Adam', rank_class_balance: float=5.0, early_stop_patience: int=-1) -> Tuple[float, float]:        
         if not isinstance(train_data[0], torch.Tensor):
             train_data = [torch.LongTensor(vec) for vec in train_data]
         if not isinstance(valid_data_w_label[0], torch.Tensor):
@@ -448,25 +445,15 @@ class KBGAN():
 
         print(f"Training KBGAN's components: {self.generator_type} generator, {self.discriminator_type} discriminator.")
         print(f"Training discriminator...")
-        best_perf_d, path_d = self.discriminator.train(heads, tails, train_data, valid_data_w_label,
-                                                    rank_class_balance, use_early_stopping=use_early_stopping, patience=patience,
-                                                    optimizer_name=optimizer_name, is_save_model=is_save_components)
-        if is_save_components and path_d is not None:
-            self.discriminator_path = path_d
-            print(f"Trained discriminator is saved to: {path_d}")
-
+        best_perf_d = self.discriminator.train(heads, tails, train_data, valid_data_w_label,
+                                                optimizer_name=optimizer_name, rank_class_balance=rank_class_balance, early_stop_patience=early_stop_patience)
         print(f"Training generator...")
-        best_perf_g, path_g = self.generator.train(heads, tails, train_data, valid_data_w_label,
-                                                    rank_class_balance, use_early_stopping=use_early_stopping, patience=patience,
-                                                    optimizer_name=optimizer_name, is_save_model=is_save_components)
-        if is_save_components and path_g is not None:
-            self.generator_path = path_g
-            print(f"Trained generator is saved to: {path_g}.")
-        return best_perf_d, path_d, best_perf_g, path_g
+        best_perf_g = self.generator.train(heads, tails, train_data, valid_data_w_label,
+                                                optimizer_name=optimizer_name, rank_class_balance=rank_class_balance, early_stop_patience=early_stop_patience)
+        return best_perf_d, best_perf_g
            
     def train_kbgan(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data_w_label: tuple,
-                rank_class_balance: float=5.0, use_early_stopping: bool=False, patience: int=10,
-                optimizer_name: str='Adam', is_save_kbgan: bool=True) -> Tuple[float, str]:
+                optimizer_name: str='Adam', rank_class_balance: float=5.0, early_stop_patience: int=-1) -> float:
         if (not self.generator.is_trained_or_loaded()) or (not self.discriminator.is_trained_or_loaded()):
             raise ValueError("Both generator and discriminator must be pretrained or loaded before being trained!")
         if not isinstance(train_data[0], torch.Tensor):
@@ -475,7 +462,6 @@ class KBGAN():
             valid_data_w_label = [torch.LongTensor(vec) for vec in valid_data_w_label]
 
         model_device = self.discriminator.get_device()
-
         # log_vars[0] for Ranking, log_vars[1] for Classification
         # Initializing at 0 means initial weight sigma=1
         self.log_vars = torch.nn.Parameter(torch.zeros(2, requires_grad=True, device=model_device)) # Ensure device matches model
@@ -591,17 +577,11 @@ class KBGAN():
                 else:
                     patience_counter += 1
                     
-                if use_early_stopping and patience_counter >= patience:
-                    logging.info('Early stopping triggered at epoch %d (patience=%d)', epoch + 1, patience)
+                if early_stop_patience > 0 and patience_counter >= early_stop_patience:
+                    logging.info('Early stopping triggered at epoch %d (patience=%d)', epoch + 1, early_stop_patience)
                     break
-
         print(f'Trained KBGAN successfully: {self.generator_type} generator, {self.discriminator_type} discriminator.')
-        if is_save_kbgan:
-            print(f"Saving trained KBGAN (discriminator) with performance: {best_perf}")
-            self.kbgan_path = self.save_kbgan()
-            print(f"Saved trained KBGAN (discriminator) successfully to: {self.kbgan_path}")
-            return best_perf, self.kbgan_path
-        return best_perf, None
+        return best_perf
 
     def evaluate_on_link_prediction(self, heads: torch.Tensor, tails: torch.Tensor, test_data: tuple,
                                         filt: bool=True, k_list: list=[1, 3, 10]) -> dict:
@@ -614,7 +594,7 @@ class KBGAN():
         metrics = self.discriminator.evaluate_on_ranking(test_data, heads, tails, filt=filt, k_list=k_list)
         return metrics
 
-    def evaluate_on_triple_classification(self, test_data_with_labels: tuple, optimizing_metric: str='accuracy') -> Tuple[dict, float, list, list]:
+    def evaluate_on_triple_classification(self, test_data_with_labels: tuple, optimizing_metric: str='accuracy') -> dict:
         if (not self.discriminator.is_trained_or_loaded()):
             raise ValueError("KBGAN (discriminator) must be trained before being tested!")
         
