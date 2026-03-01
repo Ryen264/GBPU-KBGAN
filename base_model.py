@@ -67,9 +67,10 @@ class BaseModel(object):
         self.task_dir = os.path.join('.', 'models', config._config.dataset, config._config.task, 'components')
         os.makedirs(self.task_dir, exist_ok=True)
 
-    def save(self, filename: str) -> str:
+    def save(self, filename: str=None) -> None:
+        if filename is None:
+            filename = self.model_path
         torch.save(self.model.state_dict(), filename)
-        return filename
 
     def load(self, filename: str) -> None:
         self.model.load_state_dict(torch.load(filename, map_location=self.device))

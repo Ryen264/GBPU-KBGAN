@@ -94,7 +94,7 @@ class TransE(BaseModel):
             if ((self.n_epoch >= self.epoch_per_test) and ((epoch + 1) % self.epoch_per_test == 0)):
                 test_perf = tester()
                 if (test_perf > best_perf):
-                    self.save(self.model_path)
+                    self.save()
                     best_perf = test_perf
                     patience_counter = 0
                 else:
@@ -150,7 +150,6 @@ class TransD(BaseModel):
         self.model_type = 'TransD'
         self.model_config = config._config[self.model_type]
         self.model_path = os.path.join(self.task_dir, self.model_config.model_file)
-
         self.n_epoch = self.model_config.n_epoch
         self.n_batch = self.model_config.n_batch
         self.epoch_per_test = self.model_config.epoch_per_test
@@ -206,7 +205,7 @@ class TransD(BaseModel):
             if ((self.n_epoch >= self.epoch_per_test) and ((epoch + 1) % self.epoch_per_test == 0)):
                 test_perf = tester()
                 if (test_perf > best_perf):
-                    self.save(self.model_path)
+                    self.save()
                     best_perf = test_perf
                     patience_counter = 0
                 else:
@@ -294,7 +293,7 @@ class DistMult(BaseModel):
             if ((self.n_epoch >= self.epoch_per_test) and ((epoch + 1) % self.epoch_per_test == 0)):
                 test_perf = tester()
                 if (test_perf > best_perf):
-                    self.save(self.model_path)
+                    self.save()
                     best_perf = test_perf
                     patience_counter = 0
                 else:
@@ -343,7 +342,6 @@ class ComplEx(BaseModel):
         self.model_type = 'ComplEx'
         self.model_config = config._config[self.model_type]
         self.model_path = os.path.join(self.task_dir, self.model_config.model_file)
-
         self.n_epoch = self.model_config.n_epoch
         self.n_batch = self.model_config.n_batch
         self.weight_decay = self.model_config.lam / self.model_config.n_batch
@@ -389,7 +387,7 @@ class ComplEx(BaseModel):
             if ((self.n_epoch >= self.epoch_per_test) and ((epoch + 1) % self.epoch_per_test == 0)):
                 test_perf = tester()               
                 if (test_perf > best_perf):
-                    self.save(self.model_path)
+                    self.save()
                     best_perf = test_perf
                     patience_counter = 0
                 else:
