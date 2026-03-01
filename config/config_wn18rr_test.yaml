@@ -1,6 +1,6 @@
 g_config: DistMult
 d_config: TransE
-test_batch_size: 100
+test_batch_size: 10
 dataset: wn18rr
 task: all
 KBGAN:
@@ -9,26 +9,26 @@ KBGAN:
   early_stop_patience: -1
   temperature: 1.0
   n_sample: 20
-  n_epoch: 5000
-  n_batch: 100
-  epoch_per_test: 100
+  n_epoch: 50
+  n_batch: 10
+  epoch_per_test: 10
 TransE:
   dim: 50
   margin: 3
   p: 1
   temp: 1
-  n_epoch: 1000
-  n_batch: 100
-  epoch_per_test: 50
+  n_epoch: 10
+  n_batch: 10
+  epoch_per_test: 5
   model_file: TransE.mdl
 TransD:
   dim: 50
   margin: 3
   p: 1
   temp: 1
-  n_epoch: 1000
-  n_batch: 100
-  epoch_per_test: 50
+  n_epoch: 10
+  n_batch: 10
+  epoch_per_test: 5
   model_file: TransD.mdl
 DistMult:
   dim: 50
@@ -36,9 +36,9 @@ DistMult:
   lam: 0.1
   n_sample: 20
   sample_freq: 1
-  n_epoch: 1000
-  n_batch: 100
-  epoch_per_test: 50
+  n_epoch: 10
+  n_batch: 10
+  epoch_per_test: 5
   model_file: DistMult.mdl
 ComplEx:
   dim: 25
@@ -46,9 +46,9 @@ ComplEx:
   lam: 0.1
   n_sample: 20
   sample_freq: 1
-  n_epoch: 1000
-  n_batch: 100
-  epoch_per_test: 50
+  n_epoch: 10
+  n_batch: 10
+  epoch_per_test: 5
   model_file: ComplEx.mdl
 log:
   dump_config: false

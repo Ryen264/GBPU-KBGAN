@@ -3,7 +3,7 @@ import logging
 import subprocess
 import torch
 import os
-import datetime
+import time
 
 _config = None
 class ConfigDict(dict):
@@ -141,7 +141,7 @@ def logger_init() -> None:
     if (_config.log.to_file):
         log_dir = os.path.join('.', 'logs', _config.dataset, _config.task)
         os.makedirs(log_dir, exist_ok=True)
-        log_filename = os.path.join(log_dir, _config.log.prefix + datetime.datetime.now().strftime("%m%d%H%M%S") + ".log")
+        log_filename = os.path.join(log_dir, _config.log.prefix + time.strftime("%m%d%H%M%S") + ".log")
         file_handler = logging.FileHandler(log_filename)
         file_handler.setFormatter(logging.Formatter('%(module)15s %(asctime)s %(message)s', datefmt='%H:%M:%S'))
         root_logger.addHandler(file_handler)
@@ -151,9 +151,9 @@ def logger_init() -> None:
 
 def log_step(label: str, start_ts: float) -> float:
     """Print elapsed time for a pipeline step and return a new start timestamp."""
-    elapsed = datetime.time.perf_counter() - start_ts
+    elapsed = time.perf_counter() - start_ts
     print(f"[TIMER] {label}: {elapsed:.2f}s")
-    return datetime.time.perf_counter()
+    return time.perf_counter()
 
 gpu_id = select_gpu()
 device = None

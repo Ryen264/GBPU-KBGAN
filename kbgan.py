@@ -4,7 +4,7 @@ import torch
 import torch.nn.functional as nnf
 from torch.autograd import Variable
 from torch.optim import Adam, SGD, AdamW, RMSprop, Adagrad
-from typing import Generator, Tuple, Optional
+from typing import Generator, Tuple
 import numpy as np
 
 from datasets import batch_by_num, batch_by_size, BernCorrupterMulti, BernCorrupter
