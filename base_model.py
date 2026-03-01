@@ -10,6 +10,8 @@ import config
 from datasets import batch_by_size
 from metrics import ranking_metrics
 
+FILTER_RANKING_PENALTY = 1e30
+
 class BaseModule(nn.Module):
     def __init__(self, epsilon: float=1e-30):
         super().__init__()
@@ -30,9 +32,16 @@ class BaseModule(nn.Module):
     def prob(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
         return nnf.softmax(self.prob_logit(head, relation, tail), dim=-1)
     
+    def ensure_optimizer(self) -> None:
+        if not hasattr(self, 'opt'):
+            self.opt = Adam(self.parameters(), weight_decay=0.0)
+
     def constraint(self) -> None:
         pass
-    
+
+    def parameters(self, recurse = True):
+        return super().parameters(recurse)
+
     def pair_loss(self, head_good: torch.Tensor, relation: torch.Tensor, tail_good: torch.Tensor,
                   head_bad: torch.Tensor, tail_bad: torch.Tensor) -> torch.Tensor:
         if not self.is_distance_based:
@@ -61,8 +70,11 @@ class BaseModel(object):
         self.weight_decay = 0.0
         self.model = None           # type: BaseModule
 
-        self.task_dir = os.path.join('.', 'models', config._config.dataset, config._config.task, 'components')
+        self.dataset = config._config.dataset
+        self.task = config._config.task
+        self.task_dir = os.path.join('.', 'models', self.dataset, self.task, 'components')
         os.makedirs(self.task_dir, exist_ok=True)
+        self.test_batch_size = config._config.test_batch_size
 
     def save(self, filename: str=None) -> None:
         if filename is None:
@@ -71,6 +83,30 @@ class BaseModel(object):
 
     def load(self, filename: str) -> None:
         self.model.load_state_dict(torch.load(filename, map_location=self.device))
+
+    def ensure_optimizer(self) -> None:
+        self.model.ensure_optimizer()
+
+    def parameters(self, recurse = True):
+        return self.model.parameters(recurse)
+    
+    def score(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
+        head_var = Variable(head.to(self.device))
+        relation_var = Variable(relation.to(self.device))
+        tail_var = Variable(tail.to(self.device))
+        return self.model.score(head_var, relation_var, tail_var)
+
+    def dist(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
+        head_var = Variable(head.to(self.device))
+        relation_var = Variable(relation.to(self.device))
+        tail_var = Variable(tail.to(self.device))
+        return self.model.dist(head_var, relation_var, tail_var)
+
+    def prob_logit(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
+        head_var = Variable(head.to(self.device))
+        relation_var = Variable(relation.to(self.device))
+        tail_var = Variable(tail.to(self.device))
+        return self.model.prob_logit(head_var, relation_var, tail_var)
 
     def gen_step(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor,
                  n_sample: int=1, temperature: float=1.0, train: bool=True):
@@ -130,7 +166,7 @@ class BaseModel(object):
         test_data_no_label = test_data[:3]
         count = 0
         with torch.no_grad():
-            for batch_head, batch_relation, batch_tail in batch_by_size(config._config.test_batch_size, *test_data_no_label):
+            for batch_head, batch_relation, batch_tail in batch_by_size(self.test_batch_size, *test_data_no_label):
                 batch_size = batch_head.size(0)
 
                 head_var = batch_head.unsqueeze(1).expand(batch_size, self.n_entity).to(self.device)
@@ -150,13 +186,13 @@ class BaseModel(object):
                         key_head = (tail_id, relation_id)
                         if key_head in heads and heads[key_head]._nnz() > 1:
                             tmp = head_scores[head_id].item()
-                            head_scores += heads[key_head].to(self.device) * 1e30
+                            head_scores += heads[key_head].to(self.device) * FILTER_RANKING_PENALTY
                             head_scores[head_id] = tmp
                             
                         key_tail = (head_id, relation_id)
                         if key_tail in tails and tails[key_tail]._nnz() > 1:
                             tmp = tail_scores[tail_id].item()
-                            tail_scores += tails[key_tail].to(self.device) * 1e30
+                            tail_scores += tails[key_tail].to(self.device) * FILTER_RANKING_PENALTY
                             tail_scores[tail_id] = tmp
 
                     head_metrics = ranking_metrics(head_scores, head_id, k_list=k_list)

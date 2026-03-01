@@ -12,6 +12,9 @@ from models import TransE, TransD, DistMult, ComplEx
 import config
 import metrics
 
+EPSILON = 1e-30
+FILTER_RANKING_PENALTY = 1e30
+
 class Component():
     def __init__(self, role: str, model_type: str, n_entity: int, n_relation: int):
         """
@@ -39,59 +42,56 @@ class Component():
         elif self.model_type == 'DistMult':
             self.model = DistMult(self.n_entity, self.n_relation)
         elif self.model_type == 'ComplEx':
-            self.model = ComplEx(self.n_entity, self.n_relation)    
+            self.model = ComplEx(self.n_entity, self.n_relation)   
+        print(f"Initialized component successfully: {self.model_type} model with role {self.role}, n_entity={self.n_entity}, n_relation={self.n_relation}.")
 
     def load(self, model_path: str) -> None:
         if (self.n_entity is None or self.n_relation is None):
             raise ValueError("Component must be fitted before being loaded!")
 
-        print(f"Loading component by path: {model_path}")
         if self.model_type == "TransE":
-            self.model = TransE(self.n_entity, self.n_relation)
+            self.model = TransE(self.n_entity, self.n_relation, epsilon=self.epsilon)
         elif self.model_type == "TransD":
-            self.model = TransD(self.n_entity, self.n_relation)
+            self.model = TransD(self.n_entity, self.n_relation, epsilon=self.epsilon)
         elif self.model_type == "DistMult":
-            self.model = DistMult(self.n_entity, self.n_relation)
+            self.model = DistMult(self.n_entity, self.n_relation, epsilon=self.epsilon)
         elif self.model_type == "ComplEx":
-            self.model = ComplEx(self.n_entity, self.n_relation)
+            self.model = ComplEx(self.n_entity, self.n_relation, epsilon=self.epsilon)
         self.model.load(model_path)
-        print(f"Loaded component successfully by: {self.model_path}")
+        print(f"Loaded component successfully by: {model_path}")
+
+    def save(self, model_path: str=None):
+        if model_path is None:
+            model_path = self.model.model_path
+
+        self.model.save(model_path)
+        print(f"Saved component successfully by: {model_path}")
 
     def train(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data: tuple,
-              optimizer_name: str='Adam', rank_class_balance: float = 5.0, early_stop_patience: int=-1) -> float:    
+              optimizer_name: str='Adam', rank_class_balance: float = 1.0, early_stop_patience: int=-1,
+              rank_optimizing_metric: str='mrr', rank_filt: bool=True, rank_k_list: list=[1, 3, 10],
+              class_optimizing_metric: str='accuracy', class_threshold: float=None) -> float:    
         config.overwrite_config_with_args(["--log.prefix=" + self.model_type + '_'])
         config.logger_init()
 
         if self.model_type in ['TransE', 'TransD']:
             corrupter = BernCorrupter(train_data, self.n_entity, self.n_relation)
         elif self.model_type in ['DistMult', 'ComplEx']:
-            self.n_sample = self.model_config.n_sample
-            corrupter = BernCorrupterMulti(train_data, self.n_entity, self.n_relation, self.n_sample)
+            corrupter = BernCorrupterMulti(train_data, self.n_entity, self.n_relation, self.model.n_sample)
         else:
             raise ValueError(f"Unsupported model type: {self.model_type}")
 
-        class_metrics = lambda: self.evaluate_on_classification(valid_data, optimizing_metric='accuracy', threshold=None)
-        rank_metrics = lambda: self.evaluate_on_ranking(valid_data, heads, tails, filt=True, k_list=None)
-        tester = lambda: (rank_class_balance * rank_metrics()['mrr'] + class_metrics()['accuracy']) / (rank_class_balance + 1)
+        rank_metrics = lambda: self.evaluate_on_ranking(valid_data, heads, tails,
+                                                        filt=rank_filt, k_list=rank_k_list)
+        class_metrics = lambda: self.evaluate_on_classification(valid_data,
+                                                                optimizing_metric=class_optimizing_metric, threshold=class_threshold)
+        tester = lambda: (rank_class_balance * rank_metrics()[rank_optimizing_metric] + class_metrics()[class_optimizing_metric]) / (rank_class_balance + 1)
 
-        print(f'Training component: {self.model_type} model.')
         best_perf = self.model.train(train_data, corrupter, tester,
                                     optimizer_name=optimizer_name, early_stop_patience=early_stop_patience)
         print(f'Trained component successfully: {self.model_type} model.')
         return best_perf
     
-    def save(self, model_path: Optional[str]=None):
-        """Persist underlying model; allow overriding the destination path."""
-        if model_path is not None:
-            self.model_path = model_path
-
-        if self.model_path is None:
-            raise ValueError("Component must be fitted before being saved!")
-
-        print(f"Saving component: {self.model_type} model.")
-        self.model_path = self.model.save(self.model_path)
-        print(f"Saved component successfully by: {self.model_path}")
-
     def opt_zero_grad(self) -> None:
         self.model.ensure_optimizer()
         self.model.opt.zero_grad()
@@ -108,19 +108,6 @@ class Component():
         except (AttributeError, TypeError):
             pass
 
-    def get_score(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
-        return self.model.get_score(head, relation, tail)
-    
-    def get_device(self) -> torch.device:
-        return self.model.device
-
-    def is_trained_or_loaded(self) -> bool:
-        return self.model.is_trained_or_loaded()
-
-    def is_distance_based(self) -> bool:
-        """Check if model is distance-based (lower score is better)."""
-        return self.model_type in ['TransE', 'TransD']
-
     def generator_step(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor,
                         n_sample: int=1, temperature: float=1.0, train: bool=True) -> Generator[torch.Tensor, torch.Tensor, None]:
         """
@@ -128,16 +115,13 @@ class Component():
         """
         if (self.role != "generator"):
             raise ValueError("This component is not a generator!")
-        if not self.is_trained_or_loaded():
-            raise ValueError("Generator must be pretrained or loaded before generator step!")
-
+        
         # Forward pass: generate samples
         n, m = tail.size()
-        model_device = self.get_device()
 
-        relation_var, head_var, tail_var = Variable(relation.to(model_device)), Variable(head.to(model_device)), Variable(tail.to(model_device))
+        relation_var, head_var, tail_var = Variable(relation.to(self.model.device)), Variable(head.to(self.model.device)), Variable(tail.to(self.model.device))
 
-        logits = self.model.get_prob_logit(head_var, relation_var, tail_var) / temperature
+        logits = self.model.prob_logit(head_var, relation_var, tail_var) / temperature
         probs = nnf.softmax(logits, dim=-1)
         row_idx = torch.arange(0, n).type(torch.LongTensor).unsqueeze(1).expand(n, n_sample)
         sample_idx = torch.multinomial(probs, n_sample, replacement=True)
@@ -145,15 +129,18 @@ class Component():
         sample_tails = tail[row_idx, sample_idx.data.cpu()]
         
         # Yield samples to get rewards from discriminator
+        print(f"Generator step: generated {n_sample} samples for each of the {n} input triples.")
         rewards = yield sample_heads, sample_tails
         
         # Backward pass: update generator with REINFORCE
-        if train:            
+        if train:
+            print(f"Generator step: received rewards from discriminator, updating generator parameters with REINFORCE.")            
             self.opt_zero_grad()
             log_probs = nnf.log_softmax(logits, dim=-1)
-            reinforce_loss = -torch.sum(Variable(rewards) * log_probs[row_idx.to(model_device), sample_idx.data])
+            reinforce_loss = -torch.sum(Variable(rewards) * log_probs[row_idx.to(self.model.device), sample_idx.data])
             reinforce_loss.backward()
             self.opt_step()
+        print(f"Generator step: completed parameter update with REINFORCE.")
         yield None
        
     def discriminator_step(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor,
@@ -163,54 +150,43 @@ class Component():
         """
         if (self.role != "discriminator"):
             raise ValueError("This component is not a discriminator!")
-        if not self.is_trained_or_loaded():
-            raise ValueError("Discriminator must be pretrained or loaded before discriminator step!")
-
-        def calculate_d(head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:            
-            return self.model.model.dist(head, relation, tail)
-
-        model_device = self.get_device()
 
         # Forward pass: compute losses and scores
-        head_var, relation_var, tail_var = Variable(head.to(model_device)), Variable(relation.to(model_device)), Variable(tail.to(model_device))        
-        head_fake_var, tail_fake_var = Variable(head_fake.to(model_device)), Variable(tail_fake.to(model_device))
+        head_var, relation_var, tail_var = Variable(head.to(self.model.device)), Variable(relation.to(self.model.device)), Variable(tail.to(self.model.device))        
+        head_fake_var, tail_fake_var = Variable(head_fake.to(self.model.device)), Variable(tail_fake.to(self.model.device))
         
-        d_good = calculate_d(head_var, relation_var, tail_var)
-        d_bad = calculate_d(head_fake_var, relation_var, tail_fake_var)
-        pair_loss = nnf.relu(d_good - d_bad + self.model_config.margin)
-        fake_scores = self.get_score(head_fake_var, relation_var, tail_fake_var)
+        d_good = self.model.dist(head_var, relation_var, tail_var)
+        d_bad = self.model.dist(head_fake_var, relation_var, tail_fake_var)
+        pair_loss = nnf.relu(d_good - d_bad + self.model.margin)
+        fake_scores = self.model.score(head_fake_var, relation_var, tail_fake_var)
                 
         # Backward pass: update discriminator
         if train:
+            print(f"Discriminator step: updating discriminator parameters with pairwise loss.")
             self.opt_zero_grad()
             sum_loss = torch.sum(pair_loss)
             sum_loss.backward()
             self.opt_step()
+        print(f"Discriminator step: pair_loss={pair_loss.data.mean():.4f}, fake_scores={fake_scores.data.mean():.4f}, d_good max={d_good.data.max().item():.4f}, d_bad min={d_bad.data.min().item():.4f}")
         return pair_loss.data, -fake_scores.data, d_good.data.max().item(), d_bad.data.min().item()
 
     def evaluate_on_ranking(self, test_data: tuple, heads: torch.Tensor, tails: torch.Tensor,
                             filt: bool=True, k_list: list=[1, 3, 10]) -> dict:
-        if not self.is_trained_or_loaded():
-            raise ValueError("Component must be trained before being tested!")
-
-        model_device = self.get_device()
-
-        print(f"Testing component on task ranking: {self.model_type} model.")
         mr_total = mrr_total = 0.0
         hits_total = [0] * len(k_list)
         test_data_no_label = test_data[:3]
         count = 0
         with torch.no_grad():
-            for batch_head, batch_relation, batch_tail in batch_by_size(config._config.test_batch_size, *test_data_no_label):
+            for batch_head, batch_relation, batch_tail in batch_by_size(self.model.test_batch_size, *test_data_no_label):
                 batch_size = batch_head.size(0)
 
-                all_var = torch.arange(0, self.n_entity).unsqueeze(0).expand(batch_size, self.n_entity).long().to(model_device)
-                head_var = batch_head.unsqueeze(1).expand(batch_size, self.n_entity).to(model_device)
-                relation_var = batch_relation.unsqueeze(1).expand(batch_size, self.n_entity).to(model_device)
-                tail_var = batch_tail.unsqueeze(1).expand(batch_size, self.n_entity).to(model_device)
+                all_var = torch.arange(0, self.n_entity).unsqueeze(0).expand(batch_size, self.n_entity).long().to(self.model.device)
+                head_var = batch_head.unsqueeze(1).expand(batch_size, self.n_entity).to(self.model.device)
+                relation_var = batch_relation.unsqueeze(1).expand(batch_size, self.n_entity).to(self.model.device)
+                tail_var = batch_tail.unsqueeze(1).expand(batch_size, self.n_entity).to(self.model.device)
 
-                batch_head_scores = self.get_score(all_var, relation_var, tail_var)
-                batch_tail_scores = self.get_score(head_var, relation_var, all_var)
+                batch_head_scores = self.model.score(all_var, relation_var, tail_var)
+                batch_tail_scores = self.model.score(head_var, relation_var, all_var)
             
                 batch_head_scores = batch_head_scores.detach()
                 batch_tail_scores = batch_tail_scores.detach()
@@ -221,13 +197,13 @@ class Component():
                         key_head = (tail_id, relation_id)
                         if key_head in heads and heads[key_head]._nnz() > 1:
                             tmp = head_scores[head_id].item()
-                            head_scores += heads[key_head].to(model_device) * 1e30
+                            head_scores += heads[key_head].to(self.model.device) * FILTER_RANKING_PENALTY
                             head_scores[head_id] = tmp
                             
                         key_tail = (head_id, relation_id)
                         if key_tail in tails and tails[key_tail]._nnz() > 1:
                             tmp = tail_scores[tail_id].item()
-                            tail_scores += tails[key_tail].to(model_device) * 1e30
+                            tail_scores += tails[key_tail].to(self.model.device) * FILTER_RANKING_PENALTY
                             tail_scores[tail_id] = tmp
 
                     head_metrics = metrics.ranking_metrics(scores=head_scores, target=head_id, k_list=k_list)
@@ -255,13 +231,7 @@ class Component():
         logging.info(ranking_metrics_str)
         return ranking_metrics
 
-    def evaluate_on_classification(self, test_data: tuple, optimizing_metric: str='accuracy', threshold: float=None) -> dict:
-        if not self.is_trained_or_loaded():
-            raise ValueError("Component must be trained before being tested!")
-        
-        model_device = self.get_device()
-        print(f"Testing component on task classification: {self.model_type} model.")
-        
+    def evaluate_on_classification(self, test_data: tuple, optimizing_metric: str='accuracy', threshold: float=None) -> dict:       
         def find_optimal_threshold(valid_data: tuple, labels: list, n_thresholds: int=100) -> float:
             """
             Find the optimal threshold for triple classification using validation data.
@@ -279,13 +249,13 @@ class Component():
             # Compute scores for all validation samples (batched for efficiency)
             scores_list = []
             with torch.no_grad():
-                for batch_head, batch_relation, batch_tail in batch_by_size(config._config.test_batch_size,
+                for batch_head, batch_relation, batch_tail in batch_by_size(self.model.test_batch_size,
                                                                            heads, relations, tails):
-                    head_var = torch.LongTensor(batch_head).to(model_device)
-                    relation_var = torch.LongTensor(batch_relation).to(model_device)
-                    tail_var = torch.LongTensor(batch_tail).to(model_device)
+                    head_var = torch.LongTensor(batch_head).to(self.model.device)
+                    relation_var = torch.LongTensor(batch_relation).to(self.model.device)
+                    tail_var = torch.LongTensor(batch_tail).to(self.model.device)
 
-                    batch_scores = self.get_score(head_var, relation_var, tail_var)
+                    batch_scores = self.model.score(head_var, relation_var, tail_var)
                     batch_scores = batch_scores.detach().cpu().numpy()
                     scores_list.extend(batch_scores.tolist())
 
@@ -298,11 +268,8 @@ class Component():
             best_val = 0.0
             best_threshold = 0.0
 
-            # Determine if model is distance-based or similarity-based
-            is_distance_based = self.is_distance_based()
-
             for threshold in threshold_values:
-                if is_distance_based:
+                if self.model.is_distance_based:
                     predictions = np.where(scores_array < threshold, 1, 0).tolist()
                 else:
                     predictions = np.where(scores_array > threshold, 1, 0).tolist()
@@ -325,14 +292,14 @@ class Component():
         true_labels = []
 
         with torch.no_grad():
-            for batch_head, batch_relation, batch_tail, batch_label in batch_by_size(config._config.test_batch_size,
+            for batch_head, batch_relation, batch_tail, batch_label in batch_by_size(self.model.test_batch_size,
                                                                                      heads_list, relations_list, tails_list, labels):
                 # ensure tensors on device
-                head_var = torch.LongTensor(batch_head).to(model_device)
-                relation_var = torch.LongTensor(batch_relation).to(model_device)
-                tail_var = torch.LongTensor(batch_tail).to(model_device)
+                head_var = torch.LongTensor(batch_head).to(self.model.device)
+                relation_var = torch.LongTensor(batch_relation).to(self.model.device)
+                tail_var = torch.LongTensor(batch_tail).to(self.model.device)
 
-                batch_scores = self.get_score(head_var, relation_var, tail_var)
+                batch_scores = self.model.score(head_var, relation_var, tail_var)
                 batch_scores = batch_scores.detach().cpu().tolist()
 
                 scores_list.extend([float(s) for s in batch_scores])
@@ -346,18 +313,15 @@ class Component():
             threshold = find_optimal_threshold(valid_data=(heads_list, relations_list, tails_list), labels=true_labels, n_thresholds=n_thresholds)
             logging.info(f"Determined optimal threshold for classification: {threshold:.4f} using validation data with {n_thresholds} thresholds.")
 
-        # determine whether smaller score means positive (distance-based models)
-        is_distance_based = self.is_distance_based()
-
         # Vectorized prediction generation
         scores_array = np.array(scores_list)
-        if is_distance_based:
+        if self.model.is_distance_based:
             predictions = np.where(scores_array < threshold, 1, 0).tolist()
         else:
             predictions = np.where(scores_array > threshold, 1, 0).tolist()
 
         # For distance-based models lower scores mean better; invert for AUC so higher is better
-        scores_for_auc = [-s for s in scores_list] if is_distance_based else scores_list
+        scores_for_auc = [-s for s in scores_list] if self.model.is_distance_based else scores_list
 
         classification_metrics = metrics.classification_metrics(predictions, true_labels, scores=scores_for_auc)
         # Format metrics for cleaner output
