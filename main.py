@@ -8,12 +8,13 @@ from datasets import sparse_heads_tails, inplace_shuffle
 from kbgan import KBGAN
 
 # ./main.py mode=<mode> [other optional args to overwrite config]
-
 MODE = 'full-train'  # full-train / gan-train / test-only
 DATASET = 'wn18rr'   # wn18rr / wn18 / fb15k237
-K_LIST = [1, 3, 10]                     # Default k values for ranking metrics
-RANK_FILT = True                        # Whether to apply filtering in ranking metrics evaluation
-OPTIMIZING_CLASS_METRIC = 'accuracy'    # Metric to optimize for triple classification (e.g., 'accuracy', 'f1', etc.)
+RANK_OPTIMIZING_METRIC = 'mrr'              # Metric to optimize for ranking evaluation (e.g., 'mrr', 'hits@1', etc.)
+RANK_FILT = True                            # Whether to apply filtering in ranking metrics evaluation
+RANK_K_LIST = [1, 3, 10]                    # Default k values for ranking metrics
+CLASS_OPTIMIZING_METRIC = 'accuracy'        # Metric to optimize for triple classification (e.g., 'accuracy', 'f1', etc.)
+CLASS_USE_MAXGOOD_MINBAD_THRESHOLD = True   # Whether to use dynamic threshold based on max_d_good and min_d_bad for classification
 
 def main():
     config_path = './config/config_' + DATASET + '.yaml'
@@ -29,6 +30,15 @@ def main():
         print("Running config: ", _config)
 
     dis_type, gen_type = _config.d_config, _config.g_config
+
+    optimizer_name = _config['KBGAN']['optimizer_name']
+    rank_class_balance = _config['KBGAN']['rank_class_balance']
+    early_stop_patience = _config['KBGAN']['early_stop_patience']
+    temperature = _config['KBGAN']['temperature']
+    n_sample = _config['KBGAN']['n_sample']
+    n_epoch = _config['KBGAN']['n_epoch']
+    n_batch = _config['KBGAN']['n_batch']
+    epoch_per_test = _config['KBGAN']['epoch_per_test']
 
     # Assign or construct pretrained components' paths for 'gan-train' mode
     pretrained_dis_path = os.path.join('.', 'models', DATASET, working_task, 'components', dis_type + '.mdl')
@@ -71,59 +81,61 @@ def main():
     t_step = log_step("Tensor conversion", t_step)
 
     print(f"Running mode: {MODE}")
-    model = KBGAN(discriminator_type=dis_type, generator_type=gen_type, n_entity=n_entity, n_relation=n_relation)
+    model = KBGAN(discriminator_type=dis_type, generator_type=gen_type,
+                  n_entity=n_entity, n_relation=n_relation)
 
-    optimizer_name = _config['KBGAN']['optimizer_name']
-    rank_class_balance = _config['KBGAN']['rank_class_balance']
-    early_stop_patience = _config['KBGAN']['early_stop_patience']
     if MODE == 'full-train':
         # Train 2 components
         dis_best_perf, gen_best_perf = model.train_components(heads, tails, train_data, valid_data_with_label,
-                                                            optimizer_name=optimizer_name, rank_class_balance=rank_class_balance,
-                                                            early_stop_patience=early_stop_patience)
+                                                            optimizer_name=optimizer_name, rank_class_balance=rank_class_balance, early_stop_patience=early_stop_patience,
+                                                            rank_optimizing_metric=RANK_OPTIMIZING_METRIC, rank_filt=RANK_FILT, rank_k_list=RANK_K_LIST,
+                                                            class_optimizing_metric=CLASS_OPTIMIZING_METRIC, class_use_maxgood_minbad_threshold=CLASS_USE_MAXGOOD_MINBAD_THRESHOLD)
         t_step = log_step("Pretrain components", t_step)
         print("----------------")
 
         # Test 2 components just be trained on link prediction
         dis_ranking_metrics = model.discriminator.evaluate_on_ranking(test_data, heads, tails,
-                                                                    filt=RANK_FILT, k_list=K_LIST)
+                                                                    filt=RANK_FILT, k_list=RANK_K_LIST)
         print(f"Discriminator metrics on Link Prediction: {dis_ranking_metrics}")
 
         gen_ranking_metrics = model.generator.evaluate_on_ranking(test_data, heads, tails,
-                                                                filt=RANK_FILT, k_list=K_LIST)
+                                                                filt=RANK_FILT, k_list=RANK_K_LIST)
         print(f"Generator metrics on Link Prediction: {gen_ranking_metrics}")
         t_step = log_step("Component link prediction eval", t_step)
         print("----------------")
 
         # Test 2 components just be trained on triple classification
         dis_classification_metrics = model.discriminator.evaluate_on_classification(test_data_with_label,
-                                                                                    optimizing_metric=OPTIMIZING_CLASS_METRIC)
+                                                                                    optimizing_metric=CLASS_OPTIMIZING_METRIC, threshold=None)
         print(f"Discriminator metrics on Triple Classification: {dis_classification_metrics}")
         t_step = log_step("Component triple classification eval", t_step)
 
         gen_classification_metrics = model.generator.evaluate_on_classification(test_data_with_label,
-                                                                                optimizing_metric=OPTIMIZING_CLASS_METRIC)
+                                                                                optimizing_metric=CLASS_OPTIMIZING_METRIC, threshold=None)
         print(f"Generator metrics on Triple Classification: {gen_classification_metrics}")
         print("----------------")
 
         # Train KBGAN
         best_perf = model.train_kbgan(heads, tails, train_data, valid_data_with_label,
-                                    optimizer_name=optimizer_name, rank_class_balance=rank_class_balance,
-                                    early_stop_patience=early_stop_patience)        
+                                    optimizer_name=optimizer_name, rank_class_balance=rank_class_balance, early_stop_patience=early_stop_patience,
+                                    temperature=temperature, n_sample=n_sample, n_epoch=n_epoch, n_batch=n_batch, epoch_per_test=epoch_per_test,
+                                    rank_optimizing_metric=RANK_OPTIMIZING_METRIC, rank_filt=RANK_FILT, rank_k_list=RANK_K_LIST,
+                                    class_optimizing_metric=CLASS_OPTIMIZING_METRIC, class_use_maxgood_minbad_threshold=CLASS_USE_MAXGOOD_MINBAD_THRESHOLD)
+        
         print(f"Best validation performance while training: {best_perf}")
         t_step = log_step("Train KBGAN", t_step)
         print("----------------")
         
         # Test KBGAN on link prediction
         link_prediction_metrics = model.evaluate_on_link_prediction(heads, tails, test_data,
-                                                                    filt=RANK_FILT, k_list=K_LIST)
+                                                                    filt=RANK_FILT, k_list=RANK_K_LIST)
         print(f"Link prediction metrics:\n{link_prediction_metrics}")
         t_step = log_step("KBGAN link prediction eval", t_step)
         print("----------------")
 
         # Test KBGAN on triple classification
         triple_classification_metrics = model.evaluate_on_triple_classification(test_data_with_label,
-                                                                                optimizing_metric=OPTIMIZING_CLASS_METRIC)
+                                                                                optimizing_metric=CLASS_OPTIMIZING_METRIC, use_maxgood_minbad_threshold=CLASS_USE_MAXGOOD_MINBAD_THRESHOLD)
         print(f"Triple classification metrics:\n{triple_classification_metrics}")
         t_step = log_step("KBGAN triple classification eval", t_step)
         print("----------------")
@@ -135,8 +147,10 @@ def main():
 
         # Train KBGAN
         best_perf = model.train_kbgan(heads, tails, train_data, valid_data_with_label,
-                                    optimizer_name=optimizer_name, rank_class_balance=rank_class_balance,
-                                    early_stop_patience=early_stop_patience)        
+                                    optimizer_name=optimizer_name, rank_class_balance=rank_class_balance, early_stop_patience=early_stop_patience,
+                                    temperature=temperature, n_sample=n_sample, n_epoch=n_epoch, n_batch=n_batch, epoch_per_test=epoch_per_test,
+                                    rank_optimizing_metric=RANK_OPTIMIZING_METRIC, rank_filt=RANK_FILT, rank_k_list=RANK_K_LIST,
+                                    class_optimizing_metric=CLASS_OPTIMIZING_METRIC, class_use_maxgood_minbad_threshold=CLASS_USE_MAXGOOD_MINBAD_THRESHOLD)        
         print(f"Best validation performance while training: {best_perf}")
         t_step = log_step("Train KBGAN", t_step)
         print("----------------")
@@ -144,13 +158,13 @@ def main():
         # Test KBGAN on task
         if working_task == 'link-prediction' or working_task == 'all':
             link_prediction_metrics = model.evaluate_on_link_prediction(heads, tails, test_data,
-                                                                        filt=RANK_FILT, k_list=K_LIST)
+                                                                        filt=RANK_FILT, k_list=RANK_K_LIST)
             print(f"Link prediction metrics:\n{link_prediction_metrics}")
             t_step = log_step("KBGAN link prediction eval", t_step)
 
         if working_task == 'triple-classification' or working_task == 'all':
             triple_classification_metrics = model.evaluate_on_triple_classification(test_data_with_label,
-                                                                                    optimizing_metric=OPTIMIZING_CLASS_METRIC)
+                                                                                    optimizing_metric=CLASS_OPTIMIZING_METRIC, use_maxgood_minbad_threshold=CLASS_USE_MAXGOOD_MINBAD_THRESHOLD)
             print(f"Triple classification metrics:\n{triple_classification_metrics}") 
             t_step = log_step("KBGAN triple classification eval", t_step)
         print("----------------")
@@ -162,12 +176,12 @@ def main():
         # Test KBGAN on task
         if working_task == 'link-prediction' or working_task == 'all':
             link_prediction_metrics = model.evaluate_on_link_prediction(heads, tails, test_data,
-                                                                        filt=RANK_FILT, k_list=K_LIST)
+                                                                        filt=RANK_FILT, k_list=RANK_K_LIST)
             print(f"Link prediction metrics:\n{link_prediction_metrics}")
 
         if working_task == 'triple-classification' or working_task == 'all':
             triple_classification_metrics = model.evaluate_on_triple_classification(test_data_with_label,
-                                                                                    optimizing_metric=OPTIMIZING_CLASS_METRIC)
+                                                                                    optimizing_metric=CLASS_OPTIMIZING_METRIC, use_maxgood_minbad_threshold=CLASS_USE_MAXGOOD_MINBAD_THRESHOLD)
             print(f"Triple classification metrics:\n{triple_classification_metrics}")
             t_step = log_step("KBGAN triple classification eval", t_step)
         print("----------------")

@@ -10,12 +10,12 @@ import config
 from datasets import batch_by_size
 from metrics import ranking_metrics
 
+EPSILON = 1e-30
 FILTER_RANKING_PENALTY = 1e30
 
 class BaseModule(nn.Module):
-    def __init__(self, epsilon: float=1e-30):
+    def __init__(self):
         super().__init__()
-        self.epsilon = epsilon
 
         self.is_distance_based = None
         self.margin = None
@@ -57,7 +57,7 @@ class BaseModule(nn.Module):
         device = probs.device
 
         row_idx = torch.arange(n, device=device)
-        truth_probs = torch.log(probs[row_idx, truth] + self.epsilon)
+        truth_probs = torch.log(probs[row_idx, truth] + EPSILON)
         return -truth_probs
     
 class BaseModel(object):
@@ -76,16 +76,19 @@ class BaseModel(object):
         os.makedirs(self.task_dir, exist_ok=True)
         self.test_batch_size = config._config.test_batch_size
 
-    def save(self, filename: str=None) -> None:
-        if filename is None:
-            filename = self.model_path
-        torch.save(self.model.state_dict(), filename)
+    def load(self, filepath: str) -> None:
+        self.model.load_state_dict(torch.load(filepath, map_location=self.device))
 
-    def load(self, filename: str) -> None:
-        self.model.load_state_dict(torch.load(filename, map_location=self.device))
+    def save(self, filepath: str=None) -> None:
+        if filepath is None:
+            filepath = self.model_path
+        torch.save(self.model.state_dict(), filepath)
 
     def ensure_optimizer(self) -> None:
         self.model.ensure_optimizer()
+
+    def constraint(self) -> None:
+        self.model.constraint()
 
     def parameters(self, recurse = True):
         return self.model.parameters(recurse)

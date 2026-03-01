@@ -42,7 +42,10 @@ class Component():
         elif self.model_type == 'DistMult':
             self.model = DistMult(self.n_entity, self.n_relation)
         elif self.model_type == 'ComplEx':
-            self.model = ComplEx(self.n_entity, self.n_relation)   
+            self.model = ComplEx(self.n_entity, self.n_relation)
+
+        self.device = self.model.device
+        self.model_path = self.model.model_path
         print(f"Initialized component successfully: {self.model_type} model with role {self.role}, n_entity={self.n_entity}, n_relation={self.n_relation}.")
 
     def load(self, model_path: str) -> None:
@@ -66,6 +69,10 @@ class Component():
 
         self.model.save(model_path)
         print(f"Saved component successfully by: {model_path}")
+
+    def score(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
+        head_var, relation_var, tail_var = Variable(head.to(self.device)), Variable(relation.to(self.device)), Variable(tail.to(self.device))
+        return self.model.score(head_var, relation_var, tail_var)
 
     def train(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data: tuple,
               optimizer_name: str='Adam', rank_class_balance: float = 1.0, early_stop_patience: int=-1,
@@ -119,7 +126,7 @@ class Component():
         # Forward pass: generate samples
         n, m = tail.size()
 
-        relation_var, head_var, tail_var = Variable(relation.to(self.model.device)), Variable(head.to(self.model.device)), Variable(tail.to(self.model.device))
+        relation_var, head_var, tail_var = Variable(relation.to(self.device)), Variable(head.to(self.device)), Variable(tail.to(self.device))
 
         logits = self.model.prob_logit(head_var, relation_var, tail_var) / temperature
         probs = nnf.softmax(logits, dim=-1)
@@ -129,7 +136,7 @@ class Component():
         sample_tails = tail[row_idx, sample_idx.data.cpu()]
         
         # Yield samples to get rewards from discriminator
-        print(f"Generator step: generated {n_sample} samples for each of the {n} input triples.")
+        print(f"Generator step: generated {n_sample} samples with temperature={temperature} for each of the {n} input triples.")
         rewards = yield sample_heads, sample_tails
         
         # Backward pass: update generator with REINFORCE
@@ -137,7 +144,7 @@ class Component():
             print(f"Generator step: received rewards from discriminator, updating generator parameters with REINFORCE.")            
             self.opt_zero_grad()
             log_probs = nnf.log_softmax(logits, dim=-1)
-            reinforce_loss = -torch.sum(Variable(rewards) * log_probs[row_idx.to(self.model.device), sample_idx.data])
+            reinforce_loss = -torch.sum(Variable(rewards) * log_probs[row_idx.to(self.device), sample_idx.data])
             reinforce_loss.backward()
             self.opt_step()
         print(f"Generator step: completed parameter update with REINFORCE.")
@@ -152,8 +159,8 @@ class Component():
             raise ValueError("This component is not a discriminator!")
 
         # Forward pass: compute losses and scores
-        head_var, relation_var, tail_var = Variable(head.to(self.model.device)), Variable(relation.to(self.model.device)), Variable(tail.to(self.model.device))        
-        head_fake_var, tail_fake_var = Variable(head_fake.to(self.model.device)), Variable(tail_fake.to(self.model.device))
+        head_var, relation_var, tail_var = Variable(head.to(self.device)), Variable(relation.to(self.device)), Variable(tail.to(self.device))        
+        head_fake_var, tail_fake_var = Variable(head_fake.to(self.device)), Variable(tail_fake.to(self.device))
         
         d_good = self.model.dist(head_var, relation_var, tail_var)
         d_bad = self.model.dist(head_fake_var, relation_var, tail_fake_var)
@@ -180,10 +187,10 @@ class Component():
             for batch_head, batch_relation, batch_tail in batch_by_size(self.model.test_batch_size, *test_data_no_label):
                 batch_size = batch_head.size(0)
 
-                all_var = torch.arange(0, self.n_entity).unsqueeze(0).expand(batch_size, self.n_entity).long().to(self.model.device)
-                head_var = batch_head.unsqueeze(1).expand(batch_size, self.n_entity).to(self.model.device)
-                relation_var = batch_relation.unsqueeze(1).expand(batch_size, self.n_entity).to(self.model.device)
-                tail_var = batch_tail.unsqueeze(1).expand(batch_size, self.n_entity).to(self.model.device)
+                all_var = torch.arange(0, self.n_entity).unsqueeze(0).expand(batch_size, self.n_entity).long().to(self.device)
+                head_var = batch_head.unsqueeze(1).expand(batch_size, self.n_entity).to(self.device)
+                relation_var = batch_relation.unsqueeze(1).expand(batch_size, self.n_entity).to(self.device)
+                tail_var = batch_tail.unsqueeze(1).expand(batch_size, self.n_entity).to(self.device)
 
                 batch_head_scores = self.model.score(all_var, relation_var, tail_var)
                 batch_tail_scores = self.model.score(head_var, relation_var, all_var)
@@ -197,13 +204,13 @@ class Component():
                         key_head = (tail_id, relation_id)
                         if key_head in heads and heads[key_head]._nnz() > 1:
                             tmp = head_scores[head_id].item()
-                            head_scores += heads[key_head].to(self.model.device) * FILTER_RANKING_PENALTY
+                            head_scores += heads[key_head].to(self.device) * FILTER_RANKING_PENALTY
                             head_scores[head_id] = tmp
                             
                         key_tail = (head_id, relation_id)
                         if key_tail in tails and tails[key_tail]._nnz() > 1:
                             tmp = tail_scores[tail_id].item()
-                            tail_scores += tails[key_tail].to(self.model.device) * FILTER_RANKING_PENALTY
+                            tail_scores += tails[key_tail].to(self.device) * FILTER_RANKING_PENALTY
                             tail_scores[tail_id] = tmp
 
                     head_metrics = metrics.ranking_metrics(scores=head_scores, target=head_id, k_list=k_list)
@@ -231,7 +238,8 @@ class Component():
         logging.info(ranking_metrics_str)
         return ranking_metrics
 
-    def evaluate_on_classification(self, test_data: tuple, optimizing_metric: str='accuracy', threshold: float=None) -> dict:       
+    def evaluate_on_classification(self, test_data: tuple,
+                                   optimizing_metric: str='accuracy', threshold: float=None) -> dict:       
         def find_optimal_threshold(valid_data: tuple, labels: list, n_thresholds: int=100) -> float:
             """
             Find the optimal threshold for triple classification using validation data.
@@ -251,9 +259,9 @@ class Component():
             with torch.no_grad():
                 for batch_head, batch_relation, batch_tail in batch_by_size(self.model.test_batch_size,
                                                                            heads, relations, tails):
-                    head_var = torch.LongTensor(batch_head).to(self.model.device)
-                    relation_var = torch.LongTensor(batch_relation).to(self.model.device)
-                    tail_var = torch.LongTensor(batch_tail).to(self.model.device)
+                    head_var = torch.LongTensor(batch_head).to(self.device)
+                    relation_var = torch.LongTensor(batch_relation).to(self.device)
+                    tail_var = torch.LongTensor(batch_tail).to(self.device)
 
                     batch_scores = self.model.score(head_var, relation_var, tail_var)
                     batch_scores = batch_scores.detach().cpu().numpy()
@@ -295,9 +303,9 @@ class Component():
             for batch_head, batch_relation, batch_tail, batch_label in batch_by_size(self.model.test_batch_size,
                                                                                      heads_list, relations_list, tails_list, labels):
                 # ensure tensors on device
-                head_var = torch.LongTensor(batch_head).to(self.model.device)
-                relation_var = torch.LongTensor(batch_relation).to(self.model.device)
-                tail_var = torch.LongTensor(batch_tail).to(self.model.device)
+                head_var = torch.LongTensor(batch_head).to(self.device)
+                relation_var = torch.LongTensor(batch_relation).to(self.device)
+                tail_var = torch.LongTensor(batch_tail).to(self.device)
 
                 batch_scores = self.model.score(head_var, relation_var, tail_var)
                 batch_scores = batch_scores.detach().cpu().tolist()
@@ -337,161 +345,161 @@ class KBGAN():
         generator_type = ["DistMult", "ComplEx"]
         """
         self.discriminator_type = discriminator_type
+        self.generator_type = generator_type
+        self.n_entity = n_entity
+        self.n_relation = n_relation
+
         self.discriminator = Component(role="discriminator", model_type=discriminator_type,
                                        n_entity=n_entity, n_relation=n_relation)
-
-        self.generator_type = generator_type
         self.generator = Component(role="generator", model_type=generator_type,
                                    n_entity=n_entity, n_relation=n_relation)
 
-        self.n_entity = n_entity
-        self.n_relation = n_relation
-        self.discriminator_path = None
-        self.generator_path = None
+        self.device = self.discriminator.device
+        self.discriminator_path = self.discriminator.model_path
+        self.generator_path = self.generator.model_path
 
-        task_dir = os.path.join('.', 'models', config._config.dataset, config._config.task)
-        os.makedirs(task_dir, exist_ok=True)
-        model_name = 'kbgan_' + 'dis-' + self.discriminator_type + '_gen-' + self.generator_type + '.mdl'
-        self.kbgan_path = os.path.join(task_dir, model_name)
+        self.dataset = config._config.dataset
+        self.task = config._config.task
+        self.task_dir = os.path.join('.', 'models', config._config.dataset, config._config.task)
+        os.makedirs(self.task_dir, exist_ok=True)
 
-        self.n_sample = config._config.KBGAN.n_sample
-        self.temperature = config._config.KBGAN.temperature
-        self.n_epoch = config._config.KBGAN.n_epoch
-        self.n_batch = config._config.KBGAN.n_batch
-
+        self.model_name = 'kbgan_' + 'dis-' + self.discriminator_type + '_gen-' + self.generator_type + '.mdl'
+        self.kbgan_path = os.path.join(self.task_dir, self.model_name)
         self.max_d_good = 0.0
         self.min_d_bad = float('inf')
+        self.optimal_threshold = None
 
-    def load_discriminator(self, discriminator_path: str=None) -> None:
-        print(f"Loading discriminator: {self.discriminator_type} model.")
-        self.discriminator.load(discriminator_path)
-        self.discriminator_path = discriminator_path
-        print(f"Loaded discriminator successfully by path: {discriminator_path}")
+    def load_discriminator(self, filepath: str) -> None:
+        self.discriminator.load(filepath)
+        print(f"Loaded discriminator successfully by path: {filepath}")
 
-    def load_generator(self, generator_path: str=None) -> None:
-        print(f"Loading generator: {self.generator_type} model.")
-        self.generator.load(generator_path)
-        self.generator_path = generator_path
-        print(f"Loaded generator successfully by path: {generator_path}")
+    def load_generator(self, filepath: str) -> None:
+        self.generator.load(filepath)
+        print(f"Loaded generator successfully by path: {filepath}")
 
-    def load_kbgan(self, kbgan_path: str) -> None:      
-        print(f"Loading KBGAN (discriminator)...")
-        self.discriminator.load(kbgan_path)
-        self.kbgan_path = kbgan_path
-        print(f"Loaded KBGAN (discriminator) successfully by: {self.kbgan_path}")
+    def load_kbgan(self, filepath: str) -> None:      
+        self.discriminator.load(filepath)
+        print(f"Loaded KBGAN (discriminator) successfully by: {filepath}")
 
-    def save_kbgan(self, save_path: Optional[str] = None) -> str:
-        """Save discriminator parameters to the KBGAN path."""
-        if save_path is not None:
-            self.kbgan_path = save_path
-        if self.kbgan_path is None:
-            # Construct path if not already set
-            task_dir = os.path.join('.', 'models', config._config.dataset, config._config.task)
-            os.makedirs(task_dir, exist_ok=True)
-            model_name = 'kbgan_' + 'dis-' + self.discriminator_type + '_gen-' + self.generator_type + '.mdl'
-            self.kbgan_path = os.path.join(task_dir, model_name)
-
-        print(f"Saving KBGAN (discriminator)...")
-        self.kbgan_path = self.discriminator.save(self.kbgan_path)
-        print(f"Saved KBGAN (discriminator) successfully to: {self.kbgan_path}")
-        return self.kbgan_path
-
+    def save_kbgan(self, filepath: str=None) -> None:
+        if filepath is None:
+            filepath = self.kbgan_path
+        self.discriminator.save(filepath)
+        print(f"Saved KBGAN (discriminator) successfully to: {filepath}")
+        
     def train_components(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data_w_label: tuple,
-                optimizer_name: str='Adam', rank_class_balance: float=5.0, early_stop_patience: int=-1) -> Tuple[float, float]:        
+                        optimizer_name: str='Adam', rank_class_balance: float=5.0, early_stop_patience: int=-1,
+                        rank_optimizing_metric: str='mrr', rank_filt: bool=True, rank_k_list: list=[1, 3, 10],
+                        class_optimizing_metric: str='accuracy', class_threshold: float=None) -> Tuple[float, float]:
         if not isinstance(train_data[0], torch.Tensor):
             train_data = [torch.LongTensor(vec) for vec in train_data]
         if not isinstance(valid_data_w_label[0], torch.Tensor):
             valid_data_w_label = [torch.LongTensor(vec) for vec in valid_data_w_label]
 
-        print(f"Training KBGAN's components: {self.generator_type} generator, {self.discriminator_type} discriminator.")
-        print(f"Training discriminator...")
         best_perf_d = self.discriminator.train(heads, tails, train_data, valid_data_w_label,
-                                                optimizer_name=optimizer_name, rank_class_balance=rank_class_balance, early_stop_patience=early_stop_patience)
-        print(f"Training generator...")
+                                                optimizer_name=optimizer_name, rank_class_balance=rank_class_balance, early_stop_patience=early_stop_patience,
+                                                rank_optimizing_metric=rank_optimizing_metric, rank_filt=rank_filt, rank_k_list=rank_k_list,
+                                                class_optimizing_metric=class_optimizing_metric, class_threshold=class_threshold)
+        print(f"Trained {self.discriminator_type} discriminator successfully with performance: {best_perf_d}")
+
         best_perf_g = self.generator.train(heads, tails, train_data, valid_data_w_label,
-                                                optimizer_name=optimizer_name, rank_class_balance=rank_class_balance, early_stop_patience=early_stop_patience)
+                                            optimizer_name=optimizer_name, rank_class_balance=rank_class_balance, early_stop_patience=early_stop_patience,
+                                            rank_optimizing_metric=rank_optimizing_metric, rank_filt=rank_filt, rank_k_list=rank_k_list,
+                                            class_optimizing_metric=class_optimizing_metric, class_threshold=class_threshold)
+        print(f"Trained {self.generator_type} generator successfully with performance: {best_perf_g}")
         return best_perf_d, best_perf_g
            
     def train_kbgan(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data_w_label: tuple,
-                optimizer_name: str='Adam', rank_class_balance: float=5.0, early_stop_patience: int=-1) -> float:
-        if (not self.generator.is_trained_or_loaded()) or (not self.discriminator.is_trained_or_loaded()):
-            raise ValueError("Both generator and discriminator must be pretrained or loaded before being trained!")
+                optimizer_name: str='Adam', rank_class_balance: float=1.0, early_stop_patience: int=-1,
+                temperature: float=1.0, n_sample: int=20, n_epoch: int=5000, n_batch: int=100, epoch_per_test: int=100,
+                rank_optimizing_metric: str='mrr', rank_filt: bool=True, rank_k_list: list=[1, 3, 10],
+                class_optimizing_metric: str='accuracy', class_use_maxgood_minbad_threshold: bool=True) -> float:
         if not isinstance(train_data[0], torch.Tensor):
             train_data = [torch.LongTensor(vec) for vec in train_data]
         if not isinstance(valid_data_w_label[0], torch.Tensor):
             valid_data_w_label = [torch.LongTensor(vec) for vec in valid_data_w_label]
-
-        model_device = self.discriminator.get_device()
-        # log_vars[0] for Ranking, log_vars[1] for Classification
-        # Initializing at 0 means initial weight sigma=1
-        self.log_vars = torch.nn.Parameter(torch.zeros(2, requires_grad=True, device=model_device)) # Ensure device matches model
 
         # Initialize optimizers according to optimizer_name for both models
         self.discriminator.set_optimizer(optimizer_name)
         self.generator.set_optimizer(optimizer_name)
 
+        # log_vars[0] for Ranking, log_vars[1] for Classification
+        # Initializing at 0 means initial weight sigma=1
+        log_vars = torch.nn.Parameter(torch.zeros(2, requires_grad=True, device=self.device)) # Ensure device matches model
+
         # Define Classification Loss function
         bce_criterion = torch.nn.BCELoss()
 
-        corrupter = BernCorrupterMulti(train_data, self.n_entity, self.n_relation, self.n_sample)
+        corrupter = BernCorrupterMulti(train_data, self.n_entity, self.n_relation, n_sample)
         head, relation, tail = train_data
         n_train = len(head)
 
         best_perf = 0.0
         avg_reward = 0.0
         patience_counter = 0
-
-        print(f'Training KBGAN: {self.generator_type} generator, {self.discriminator_type} discriminator.')
-        for epoch in range(self.n_epoch):
+        for epoch in range(n_epoch):
             epoch_d_loss = 0
             epoch_reward = 0
 
             head_cand, relation_cand, tail_cand = corrupter.corrupt(head, relation, tail, keep_truth=False)
-            for h, r, t, hs, rs, ts in batch_by_num(self.n_batch, head, relation, tail, head_cand, relation_cand, tail_cand, n_sample=n_train):
+            for h, r, t, hs, rs, ts in batch_by_num(n_batch, head, relation, tail, head_cand, relation_cand, tail_cand, n_sample=n_train):
                 # Move tensors to device
-                h = h.to(model_device)
-                r = r.to(model_device)
-                t = t.to(model_device)
+                h_device, r_device, t_device = h.to(self.device), r.to(self.device), t.to(self.device)
                 
                 # --- Generator Step ---
-                gen_step = self.generator.generator_step(hs, rs, ts, temperature=self.temperature)
+                gen_step = self.generator.generator_step(hs, rs, ts,
+                                                        n_sample=n_sample, temperature=temperature,
+                                                        train=True)
                 head_smpl, tail_smpl = next(gen_step)
+                head_smpl_device, tail_smpl_device = head_smpl.squeeze().to(self.device), tail_smpl.squeeze().to(self.device)
                 
                 # --- Discriminator Step ---
                 # 1. Get Ranking Loss (and rewards for Generator)
-                loss_rank, rewards, max_d_good, min_d_bad = self.discriminator.discriminator_step(h, r, t, head_fake=head_smpl.squeeze(), tail_fake=tail_smpl.squeeze(), train=True)
+                loss_rank, rewards, max_d_good, min_d_bad = self.discriminator.discriminator_step(head_good=h_device, relation=r_device, tail_good=t_device,
+                                                                                                  head_fake=head_smpl_device, tail_fake=tail_smpl_device,
+                                                                                                  train=True)
 
                 # Update max_d_good and min_d_bad for monitoring
-                self.max_d_good = max(self.max_d_good, max_d_good)
-                self.min_d_bad = min(self.min_d_bad, min_d_bad)
+                update_threshold = False
+                if max_d_good > self.max_d_good:
+                    logging.info(f"Updated max_d_good: {self.max_d_good:.4f} -> {max_d_good:.4f}")
+                    self.max_d_good = max_d_good
+                    update_threshold = True
+                if min_d_bad < self.min_d_bad:
+                    logging.info(f"Updated min_d_bad: {self.min_d_bad:.4f} -> {min_d_bad:.4f}")
+                    self.min_d_bad = min_d_bad
+                    update_threshold = True
+
+                # Calculate optimal threshold for classification based on observed max_d_good and min_d_bad
+                if update_threshold:
+                    self.optimal_threshold = (self.max_d_good + self.min_d_bad) / 2
+                    logging.info(f"Updated optimal_threshold: {self.optimal_threshold:.4f} based on max_d_good and min_d_bad.")                    
 
                 # 2. Get Classification Loss (BCE)
                 # We need raw scores from the discriminator to compute BCE.
-                pos_scores = self.discriminator.model.model(h, r, t)
-                neg_scores = self.discriminator.model.model(head_smpl.squeeze().to(model_device), r, tail_smpl.squeeze().to(model_device))
+                pos_score = self.discriminator.score(h_device, r_device, t_device)
+                neg_score = self.discriminator.score(head_smpl_device, r_device, tail_smpl_device)
                 
                 # Normalize scores to [0, 1] using sigmoid and clamp to avoid numerical issues
-                pos_scores_norm = torch.clamp(torch.sigmoid(pos_scores), min=1e-6, max=1.0-1e-6).float()
-                neg_scores_norm = torch.clamp(torch.sigmoid(neg_scores), min=1e-6, max=1.0-1e-6).float()
+                pos_score_norm = torch.clamp(torch.sigmoid(pos_score), min=EPSILON, max=1.0-EPSILON).float()
+                neg_score_norm = torch.clamp(torch.sigmoid(neg_score), min=EPSILON, max=1.0-EPSILON).float()
                 
                 # Target: 1 for Real, 0 for Fake
-                target_pos = torch.ones_like(pos_scores_norm, dtype=torch.float32)
-                target_neg = torch.zeros_like(neg_scores_norm, dtype=torch.float32)
+                target_pos = torch.ones_like(pos_score_norm, dtype=torch.float32)
+                target_neg = torch.zeros_like(neg_score_norm, dtype=torch.float32)
 
-                # Formula: L_total = exp(-s1)*L1 + s1 + exp(-s2)*L2 + s2
+                # FORMULA: L_total = exp(-s1)*L1 + s1 + exp(-s2)*L2 + s2
                 # L1 = Ranking Loss, L2 = Classification Loss, s1 and s2 are log_vars for dynamic weighting
 
                 # Calculate classification loss
-                loss_class = bce_criterion(pos_scores_norm, target_pos) + bce_criterion(neg_scores_norm, target_neg)
-
-                precision_class = torch.exp(-self.log_vars[1])
-                loss_class_weighted = precision_class * loss_class + self.log_vars[1]
+                loss_class = bce_criterion(pos_score_norm, target_pos) + bce_criterion(neg_score_norm, target_neg)
+                precision_class = torch.exp(-log_vars[1])
+                loss_class_weighted = precision_class * loss_class + log_vars[1]
 
                 # Calculate ranking loss
                 loss_rank_scalar = torch.mean(loss_rank)
-                
-                precision_rank = torch.exp(-self.log_vars[0])
-                loss_rank_weighted = precision_rank * loss_rank_scalar + self.log_vars[0]
+                precision_rank = torch.exp(-log_vars[0])
+                loss_rank_weighted = precision_rank * loss_rank_scalar + log_vars[0]
                 
                 # Calculate total loss with balance factor
                 total_loss = (rank_class_balance * loss_rank_weighted + loss_class_weighted) / (rank_class_balance + 1)
@@ -520,19 +528,24 @@ class KBGAN():
             avg_reward = epoch_reward / n_train
 
             logging.info('Epoch %d/%d, Joint_Loss=%f, Rank_W=%f, Class_W=%f', 
-                        epoch + 1, self.n_epoch, avg_loss, 
-                        self.log_vars[0].item(), self.log_vars[1].item())
+                        epoch + 1, n_epoch, avg_loss, log_vars[0].item(), log_vars[1].item())
 
-            if (epoch + 1) % config._config.KBGAN.epoch_per_test == 0:
-                rank_metrics = self.discriminator.evaluate_on_ranking(valid_data_w_label, heads, tails, filt=True, k_list=None)
-                class_metrics = self.discriminator.evaluate_on_classification(valid_data_w_label, optimizing_metric='accuracy', threshold=None)
-                perf = (rank_class_balance * rank_metrics['mrr'] + class_metrics['accuracy']) / (rank_class_balance + 1)
-
-                logging.info('Validation at epoch %d: MRR=%f, Accuracy=%f, Perf=%f', 
-                            epoch + 1, rank_metrics['mrr'], class_metrics['accuracy'], perf)
-                if perf > best_perf:
-                    print(f"Saving KBGAN at epoch {epoch + 1} with performance: {best_perf}")
-                    best_perf = perf
+            if (epoch + 1) % epoch_per_test == 0:
+                rank_metrics = self.discriminator.evaluate_on_ranking(valid_data_w_label, heads, tails,
+                                                                      filt=rank_filt, k_list=rank_k_list)
+                
+                class_threshold = self.optimal_threshold if class_use_maxgood_minbad_threshold else None
+                class_metrics = self.discriminator.evaluate_on_classification(valid_data_w_label,
+                                                                              optimizing_metric=class_optimizing_metric, threshold=class_threshold)
+                
+                test_perf = (rank_class_balance * rank_metrics[rank_optimizing_metric] + class_metrics[class_optimizing_metric]) / (rank_class_balance + 1)
+                logging.info('Validation at epoch %d: %s=%f, %s=%f, Perf=%f', 
+                            epoch + 1, rank_optimizing_metric, rank_metrics[rank_optimizing_metric], class_optimizing_metric, class_metrics[class_optimizing_metric], test_perf)
+                
+                if test_perf > best_perf:
+                    self.save_kbgan()  # Save the best model
+                    print(f"Saved KBGAN at epoch {epoch + 1} with performance: {best_perf}")
+                    best_perf = test_perf
                     patience_counter = 0
                 else:
                     patience_counter += 1
@@ -544,22 +557,19 @@ class KBGAN():
         return best_perf
 
     def evaluate_on_link_prediction(self, heads: torch.Tensor, tails: torch.Tensor, test_data: tuple,
-                                        filt: bool=True, k_list: list=[1, 3, 10]) -> dict:
-        if (not self.discriminator.is_trained_or_loaded()):
-            raise ValueError("KBGAN (discriminator) must be trained before being tested!")
+                                    filt: bool=True, k_list: list=[1, 3, 10]) -> dict:
         if not isinstance(test_data[0], torch.Tensor):
             test_data = [torch.LongTensor(vec) for vec in test_data]
 
         print("Evaluating KBGAN (discriminator) on Link Prediction...")
-        metrics = self.discriminator.evaluate_on_ranking(test_data, heads, tails, filt=filt, k_list=k_list)
+        metrics = self.discriminator.evaluate_on_ranking(test_data, heads, tails,
+                                                        filt=filt, k_list=k_list)
         return metrics
 
-    def evaluate_on_triple_classification(self, test_data_with_labels: tuple, optimizing_metric: str='accuracy') -> dict:
-        if (not self.discriminator.is_trained_or_loaded()):
-            raise ValueError("KBGAN (discriminator) must be trained before being tested!")
-        
+    def evaluate_on_triple_classification(self, test_data_with_labels: tuple,
+                                          optimizing_metric: str='accuracy', use_maxgood_minbad_threshold: bool=True) -> dict:
         print("Evaluating KBGAN discriminator on Triple Classification...")
-        threshold = (self.max_d_good + self.min_d_bad) / 2
-        logging.info(f"Using threshold: {threshold:.4f} for triple classification based on observed max_d_good: {self.max_d_good:.4f} and min_d_bad: {self.min_d_bad:.4f}")
-        metrics = self.discriminator.evaluate_on_classification(test_data_with_labels, optimizing_metric=optimizing_metric, threshold=threshold)
+        threshold = self.optimal_threshold if use_maxgood_minbad_threshold else None
+        metrics = self.discriminator.evaluate_on_classification(test_data_with_labels,
+                                                                optimizing_metric=optimizing_metric, threshold=threshold)
         return metrics

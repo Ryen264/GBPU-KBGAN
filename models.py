@@ -11,9 +11,11 @@ import config
 from datasets import batch_by_num
 from base_model import BaseModel, BaseModule
 
+EPSILON = 1e-30
+
 class TransEModule(BaseModule):
-    def __init__(self, n_entity: int, n_relation: int, config: config.Config, epsilon: float=1e-30):
-        super().__init__(epsilon=epsilon)
+    def __init__(self, n_entity: int, n_relation: int, config: config.Config):
+        super().__init__()
         self.model_type = 'TransE'
         self.model_config = config._config[self.model_type]
 
@@ -34,7 +36,7 @@ class TransEModule(BaseModule):
             param.data.renorm_(2, 0, 1)
 
     def forward(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
-        return torch.norm(self.entity_embed(tail) - self.entity_embed(head) - self.relation_embed(relation) + self.epsilon, p=self.p, dim=-1)
+        return torch.norm(self.entity_embed(tail) - self.entity_embed(head) - self.relation_embed(relation) + EPSILON, p=self.p, dim=-1)
 
     def dist(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
         return self.forward(head, relation, tail)
@@ -50,7 +52,7 @@ class TransEModule(BaseModule):
         self.relation_embed.weight.data.renorm_(2, 0, 1)
 
 class TransE(BaseModel):
-    def __init__(self, n_entity: int, n_relation: int, epsilon: float=1e-30):
+    def __init__(self, n_entity: int, n_relation: int):
         self.use_gpu = (config.device.type == 'cuda')
         self.device = torch.device('cuda' if self.use_gpu else 'cpu')
 
@@ -63,8 +65,11 @@ class TransE(BaseModel):
         self.n_batch = self.model_config.n_batch
         self.epoch_per_test = self.model_config.epoch_per_test
 
-        self.model = TransEModule(self.n_entity, self.n_relation, self.model_config, epsilon=epsilon)
+        self.model = TransEModule(self.n_entity, self.n_relation, self.model_config)
         self.model.to(self.device)
+
+        self.is_distance_based = self.model.is_distance_based
+        self.margin = self.model.margin
 
     def train(self, train_data: Tuple[torch.Tensor, torch.Tensor, torch.Tensor], corrupter, tester,
               optimizer_name: str='Adam', early_stop_patience: int=-1) -> float:
@@ -115,8 +120,8 @@ class TransE(BaseModel):
         return best_perf
     
 class TransDModule(BaseModule):
-    def __init__(self, n_entity: int, n_relation: int, config: config.Config, epsilon: float=1e-30):
-        super().__init__(epsilon=epsilon)
+    def __init__(self, n_entity: int, n_relation: int, config: config.Config):
+        super().__init__()
         self.model_type = 'TransD'
         self.model_config = config._config[self.model_type]
 
@@ -143,7 +148,7 @@ class TransDModule(BaseModule):
                    torch.sum(self.proj_entity_embed(head) * self.entity_embed(head), dim=-1, keepdim=True) * self.proj_relation_embed(relation)
         tail_proj = self.entity_embed(tail) +\
                    torch.sum(self.proj_entity_embed(tail) * self.entity_embed(tail), dim=-1, keepdim=True) * self.proj_relation_embed(relation)
-        return torch.norm(tail_proj - self.relation_embed(relation) - head_proj + self.epsilon, p=self.p, dim=-1)
+        return torch.norm(tail_proj - self.relation_embed(relation) - head_proj + EPSILON, p=self.p, dim=-1)
 
     def dist(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
         return self.forward(head, relation, tail)
@@ -159,7 +164,7 @@ class TransDModule(BaseModule):
             param.data.renorm_(2, 0, 1)
 
 class TransD(BaseModel):
-    def __init__(self, n_entity: int, n_relation: int, epsilon: float=1e-30):
+    def __init__(self, n_entity: int, n_relation: int):
         self.use_gpu = (config.device.type == 'cuda')
         self.device = torch.device('cuda' if self.use_gpu else 'cpu')
         super().__init__(n_entity, n_relation)
@@ -171,8 +176,11 @@ class TransD(BaseModel):
         self.n_batch = self.model_config.n_batch
         self.epoch_per_test = self.model_config.epoch_per_test
 
-        self.model = TransDModule(self.n_entity, self.n_relation, self.model_config, epsilon=epsilon)
+        self.model = TransDModule(self.n_entity, self.n_relation, self.model_config)
         self.model.to(self.device)
+
+        self.is_distance_based = self.model.is_distance_based
+        self.margin = self.model.margin
 
     def load_vec(self, vecpath: str) -> None:
         entity_mat = np.loadtxt(os.path.join(vecpath, 'entity2vec.vec'))
@@ -235,8 +243,8 @@ class TransD(BaseModel):
         return best_perf
     
 class DistMultModule(BaseModule):
-    def __init__(self, n_entity: int, n_relation: int, config: config.Config, epsilon: float=1e-30):
-        super().__init__(epsilon=epsilon)
+    def __init__(self, n_entity: int, n_relation: int, config: config.Config):
+        super().__init__()
         self.model_type = 'DistMult'
         self.model_config = config._config[self.model_type]
         
@@ -263,7 +271,7 @@ class DistMultModule(BaseModule):
         return self.forward(head, relation, tail)
 
 class DistMult(BaseModel):
-    def __init__(self, n_entity: int, n_relation: int, epsilon: float=1e-30):
+    def __init__(self, n_entity: int, n_relation: int):
         self.use_gpu = (config.device.type == 'cuda')
         self.device = torch.device('cuda' if self.use_gpu else 'cpu')
         super().__init__(n_entity, n_relation)
@@ -279,8 +287,11 @@ class DistMult(BaseModel):
         self.epoch_per_test = self.model_config.epoch_per_test
 
         self.weight_decay = self.lam / self.n_batch
-        self.model = DistMultModule(self.n_entity, self.n_relation, self.model_config, epsilon=epsilon)
+        self.model = DistMultModule(self.n_entity, self.n_relation, self.model_config)
         self.model.to(self.device)
+
+        self.is_distance_based = self.model.is_distance_based
+        self.margin = self.model_config.margin
 
     def train(self, train_data: tuple, corrupter, tester,
               optimizer_name: str='Adam', early_stop_patience: int=-1) -> float:
@@ -332,8 +343,8 @@ class DistMult(BaseModel):
         return best_perf
 
 class ComplExModule(BaseModule):
-    def __init__(self, n_entity: int, n_relation: int, config: config.Config, epsilon: float=1e-30):
-        super().__init__(epsilon=epsilon)
+    def __init__(self, n_entity: int, n_relation: int, config: config.Config):
+        super().__init__()
         self.model_type = 'ComplEx'
         self.model_config = config._config[self.model_type]
 
@@ -368,13 +379,13 @@ class ComplExModule(BaseModule):
         return self.forward(head, relation, tail)
 
 class ComplEx(BaseModel):
-    def __init__(self, n_entity: int, n_relation: int, epsilon: float=1e-30):
+    def __init__(self, n_entity: int, n_relation: int):
         self.use_gpu = (config.device.type == 'cuda')
         self.device = torch.device('cuda' if self.use_gpu else 'cpu')
         super().__init__(n_entity, n_relation)
         self.model_type = 'ComplEx'
         self.model_config = config._config[self.model_type]
-        self.model_path = os.path.join(self.task_dir, self.model_config.model_file, f"epsilon_{epsilon}")
+        self.model_path = os.path.join(self.task_dir, self.model_config.model_file)
         
         self.lam = self.model_config.lam
         self.n_sample = self.model_config.n_sample
@@ -384,8 +395,11 @@ class ComplEx(BaseModel):
         self.epoch_per_test = self.model_config.epoch_per_test
         
         self.weight_decay = self.lam / self.n_batch
-        self.model = ComplExModule(self.n_entity, self.n_relation, self.model_config, epsilon=epsilon)
+        self.model = ComplExModule(self.n_entity, self.n_relation, self.model_config)
         self.model.to(self.device)
+
+        self.is_distance_based = self.model.is_distance_based
+        self.margin = self.model_config.margin
 
     def train(self, train_data: tuple, corrupter, tester,
               optimizer_name: str='Adam', early_stop_patience: int=-1) -> float:
