@@ -4,14 +4,14 @@ test_batch_size: 100
 dataset: wn18
 task: all
 KBGAN:
+  temperature: 1.0
+  optimizer_name: Adam
+  rank_class_balance: 1.0
+  early_stop_patience: -1
   n_sample: 20
   n_epoch: 5000
   n_batch: 100
   epoch_per_test: 100
-  temperature: 1.0
-  rank_class_balance: 1.0
-  optimizer_name: Adam
-  early_stop_patience: -1
 TransE:
   dim: 50
   margin: 3

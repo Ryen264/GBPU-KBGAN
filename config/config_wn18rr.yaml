@@ -4,18 +4,19 @@ test_batch_size: 100
 dataset: wn18rr
 task: all
 KBGAN:
+  temperature: 1.0
+  optimizer_name: Adagrad
+  rank_class_balance: 1.0
+  early_stop_patience: -1
   n_sample: 20
   n_epoch: 5000
   n_batch: 100
   epoch_per_test: 100
-  temperature: 1.0
-  rank_class_balance: 1.0
-  optimizer_name: Adagrad
-  early_stop_patience: -1
 TransE:
   dim: 50
   margin: 3
   p: 1
+  temp: 1
   n_epoch: 1000
   n_batch: 100
   epoch_per_test: 50
@@ -24,14 +25,15 @@ TransD:
   dim: 50
   margin: 3
   p: 1
+  temp: 1
   n_epoch: 1000
   n_batch: 100
   epoch_per_test: 50
   model_file: TransD.mdl
 DistMult:
   dim: 50
-  lam: 0.1
   sigma: 0.2
+  lam: 0.1
   n_sample: 20
   sample_freq: 1
   n_epoch: 1000
@@ -40,8 +42,8 @@ DistMult:
   model_file: DistMult.mdl
 ComplEx:
   dim: 25
-  lam: 0.1
   sigma: 0.2
+  lam: 0.1
   n_sample: 20
   sample_freq: 1
   n_epoch: 1000

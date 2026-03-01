@@ -7,11 +7,10 @@ from data_loader import index_entity_relation, graph_size, read_data
 from datasets import sparse_heads_tails, inplace_shuffle
 from kbgan import KBGAN
 
-MODE = 'full-train'  # full-train / gan-train / test-only
-DATASET = 'wn18rr'   # wn18rr / wn18 / fb15k237
-
 # ./main.py mode=<mode> [other optional args to overwrite config]
 
+MODE = 'full-train'  # full-train / gan-train / test-only
+DATASET = 'wn18rr'   # wn18rr / wn18 / fb15k237
 K_LIST = [1, 3, 10]                     # Default k values for ranking metrics
 RANK_FILT = True                        # Whether to apply filtering in ranking metrics evaluation
 OPTIMIZING_CLASS_METRIC = 'accuracy'    # Metric to optimize for triple classification (e.g., 'accuracy', 'f1', etc.)
@@ -174,7 +173,6 @@ def main():
         print("----------------")
     else: 
         print("Invalid mode. Please try again and specify a mode: full-train / gan-train / test-only") 
-
     total_elapsed = time.perf_counter() - t_total
     print(f"[TIMER] Total runtime: {total_elapsed:.2f}s")
 

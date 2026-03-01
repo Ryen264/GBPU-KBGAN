@@ -32,16 +32,14 @@ class Component():
 
         self.n_entity = n_entity
         self.n_relation = n_relation
-
-        use_gpu = (config.device.type == 'cuda')
         if self.model_type == 'TransE':
-            self.model = TransE(self.n_entity, self.n_relation, use_gpu=use_gpu)
+            self.model = TransE(self.n_entity, self.n_relation)
         elif self.model_type == 'TransD':
-            self.model = TransD(self.n_entity, self.n_relation, use_gpu=use_gpu)
+            self.model = TransD(self.n_entity, self.n_relation)
         elif self.model_type == 'DistMult':
-            self.model = DistMult(self.n_entity, self.n_relation, use_gpu=use_gpu)
+            self.model = DistMult(self.n_entity, self.n_relation)
         elif self.model_type == 'ComplEx':
-            self.model = ComplEx(self.n_entity, self.n_relation, use_gpu=use_gpu)    
+            self.model = ComplEx(self.n_entity, self.n_relation)    
 
     def load(self, model_path: str) -> None:
         if (self.n_entity is None or self.n_relation is None):
@@ -49,13 +47,13 @@ class Component():
 
         print(f"Loading component by path: {model_path}")
         if self.model_type == "TransE":
-            self.model = TransE(self.n_entity, self.n_relation, self.model_config)
+            self.model = TransE(self.n_entity, self.n_relation)
         elif self.model_type == "TransD":
-            self.model = TransD(self.n_entity, self.n_relation, self.model_config)
+            self.model = TransD(self.n_entity, self.n_relation)
         elif self.model_type == "DistMult":
-            self.model = DistMult(self.n_entity, self.n_relation, self.model_config)
+            self.model = DistMult(self.n_entity, self.n_relation)
         elif self.model_type == "ComplEx":
-            self.model = ComplEx(self.n_entity, self.n_relation, self.model_config)
+            self.model = ComplEx(self.n_entity, self.n_relation)
         self.model.load(model_path)
         print(f"Loaded component successfully by: {self.model_path}")
 
@@ -76,11 +74,9 @@ class Component():
         rank_metrics = lambda: self.evaluate_on_ranking(valid_data, heads, tails, filt=True, k_list=None)
         tester = lambda: (rank_class_balance * rank_metrics()['mrr'] + class_metrics()['accuracy']) / (rank_class_balance + 1)
 
-        use_gpu = (config.device.type == 'cuda')
-
         print(f'Training component: {self.model_type} model.')
         best_perf = self.model.train(train_data, corrupter, tester,
-                                    optimizer_name=optimizer_name, early_stop_patience=early_stop_patience, use_gpu=use_gpu)
+                                    optimizer_name=optimizer_name, early_stop_patience=early_stop_patience)
         print(f'Trained component successfully: {self.model_type} model.')
         return best_perf
     

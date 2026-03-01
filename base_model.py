@@ -11,8 +11,12 @@ from datasets import batch_by_size
 from metrics import ranking_metrics
 
 class BaseModule(nn.Module):
-    def __init__(self, n_entity: int, n_relation: int):
+    def __init__(self, epsilon: float=1e-30):
         super().__init__()
+        self.epsilon = epsilon
+
+        self.is_distance_based = None
+        self.margin = None
         
     def score(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
         raise NotImplementedError
@@ -31,6 +35,9 @@ class BaseModule(nn.Module):
     
     def pair_loss(self, head_good: torch.Tensor, relation: torch.Tensor, tail_good: torch.Tensor,
                   head_bad: torch.Tensor, tail_bad: torch.Tensor) -> torch.Tensor:
+        if not self.is_distance_based:
+            raise NotImplementedError("Pairwise loss is only implemented for distance-based models within margin.")
+        
         d_good = self.dist(head_good, relation, tail_good)
         d_bad = self.dist(head_bad, relation, tail_bad)
         return nnf.relu(d_good - d_bad + self.margin)
@@ -38,32 +45,22 @@ class BaseModule(nn.Module):
     def softmax_loss(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor, truth: torch.Tensor) -> torch.Tensor:
         probs = self.prob(head, relation, tail)
         n = probs.size(0)
-        row_idx = torch.arange(n, device=probs.device)
-        truth_probs = torch.log(probs[row_idx, truth] + 1e-30)
+        device = probs.device
+
+        row_idx = torch.arange(n, device=device)
+        truth_probs = torch.log(probs[row_idx, truth] + self.epsilon)
         return -truth_probs
     
 class BaseModel(object):
-    def __init__(self, n_entity: int, n_relation: int, use_gpu: bool=None):
-        """
-        BaseModel now supports selecting device and storing n_entity, n_relation, config at runtime.
-        - If `use_gpu is None`, it will use the device selected by `config` module.
-        - If `use_gpu is True`, it will attempt to use CUDA (and auto-select a GPU via config.select_gpu()).
-        - If `use_gpu is False`, it will force CPU.
-        """
+    def __init__(self, n_entity: int, n_relation: int):
         self.n_entity = n_entity
         self.n_relation = n_relation
-        self.model_type = None      # to be set by subclasses, type: str
-        self.model_config = None    # to be set by subclasses, type: config.Config
-        self.model_path = None 
-        self.model = None           # type: BaseModule
-        self.weight_decay = 0
-        
-        if use_gpu is None:
-            use_gpu = torch.cuda.is_available()
-        if use_gpu and not torch.cuda.is_available():
-            raise RuntimeError("CUDA requested but not available.")
 
-        self.device = torch.device('cuda' if use_gpu else 'cpu')
+        self.device = None
+        self.model_path = None 
+        self.weight_decay = 0.0
+        self.model = None           # type: BaseModule
+
         self.task_dir = os.path.join('.', 'models', config._config.dataset, config._config.task, 'components')
         os.makedirs(self.task_dir, exist_ok=True)
 
