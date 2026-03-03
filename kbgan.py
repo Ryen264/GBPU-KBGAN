@@ -138,7 +138,6 @@ class Component():
         sample_tails = tail[row_idx, sample_idx.data.cpu()]
         
         # Yield samples to get rewards from discriminator
-        print(f"Generator step: generated {n_sample} samples with temperature={temperature} for each of the {n} input triples.")
         rewards = yield sample_heads, sample_tails
         
         # Backward pass: update generator with REINFORCE
@@ -179,7 +178,6 @@ class Component():
             sum_loss = torch.sum(pair_loss)
             sum_loss.backward()
             self.opt_step()
-        print(f"Discriminator step: pair_loss={pair_loss.detach().mean().item():.4f}, fake_scores={fake_scores.detach().mean().item():.4f}, d_good max={d_good.detach().max().item():.4f}, d_bad min={d_bad.detach().min().item():.4f}")
         return pair_loss.detach(), -fake_scores.detach(), d_good.detach().max().item(), d_bad.detach().min().item()
 
     def evaluate_on_ranking(self, test_data: tuple, heads: torch.Tensor, tails: torch.Tensor,

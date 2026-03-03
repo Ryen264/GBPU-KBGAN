@@ -69,6 +69,8 @@ class BaseModel(object):
         self.model_path = None 
         self.weight_decay = 0.0
         self.model = None           # type: BaseModule
+        self.opt = None             # type: torch.optim.Optimizer
+        self.lr = 0.0
 
         self.dataset = config._config.dataset
         self.task = config._config.task
