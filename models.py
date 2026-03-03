@@ -12,6 +12,7 @@ from datasets import batch_by_num
 from base_model import BaseModel, BaseModule
 
 EPSILON = 1e-30
+OPTIMIZER_MAP = {'Adam': Adam, 'SGD': SGD, 'AdamW': AdamW, 'RMSprop': RMSprop, 'Adagrad': Adagrad}
 
 class TransEModule(BaseModule):
     def __init__(self, n_entity: int, n_relation: int, config: config.config):
@@ -64,22 +65,22 @@ class TransE(BaseModel):
         self.n_batch = self.model_config.n_batch
         self.epoch_per_test = self.model_config.epoch_per_test
 
+        self.optimizer_name = self.model_config.optimizer
+        self.lr = self.model_config.learning_rate
+
         self.model = TransEModule(self.n_entity, self.n_relation, self.model_config)
         self.model.to(self.device)
-
         self.is_distance_based = self.model.is_distance_based
         self.margin = self.model.margin
+        self.opt = OPTIMIZER_MAP[self.optimizer_name](self.model.parameters(), lr=self.lr)
 
-    def train(self, train_data: Tuple[torch.Tensor, torch.Tensor, torch.Tensor], corrupter, tester,
-              optimizer_name: str='Adam', early_stop_patience: int=-1) -> float:
+    def train(self, train_data: Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+              corrupter, tester, early_stop_patience: int=-1) -> float:
         if self.use_gpu:
-            self.set_device(self.device)
+            self.device = config.set_device(self.use_gpu)
 
         head, relation, tail = train_data
         n_train = len(head)
-        optimizer_class = {'Adam': Adam, 'SGD': SGD, 'AdamW': AdamW, 'RMSprop': RMSprop, 'Adagrad': Adagrad}.get(optimizer_name, Adam)
-        optimizer = optimizer_class(self.model.parameters())
-
         best_perf = 0.0
         patience_counter = 0
         for epoch in range(self.n_epoch):
@@ -100,7 +101,7 @@ class TransE(BaseModel):
                 self.model.zero_grad()
                 loss = torch.sum(self.model.pair_loss(Variable(h0), Variable(r), Variable(t0), Variable(h1), Variable(t1)))
                 loss.backward()
-                optimizer.step()
+                self.opt.step()
                 self.model.constraint()
                 epoch_loss += loss.item()
             logging.info('Epoch %d/%d, Loss=%f', epoch + 1, self.n_epoch, epoch_loss / n_train)
@@ -174,11 +175,14 @@ class TransD(BaseModel):
         self.n_batch = self.model_config.n_batch
         self.epoch_per_test = self.model_config.epoch_per_test
 
+        self.optimizer_name = self.model_config.optimizer
+        self.lr = self.model_config.learning_rate
+
         self.model = TransDModule(self.n_entity, self.n_relation, self.model_config)
         self.model.to(self.device)
-
         self.is_distance_based = self.model.is_distance_based
         self.margin = self.model.margin
+        self.opt = OPTIMIZER_MAP[self.optimizer_name](self.model.parameters(), lr=self.lr)
 
     def load_vec(self, vecpath: str) -> None:
         entity_mat = np.loadtxt(os.path.join(vecpath, 'entity2vec.vec'))
@@ -191,16 +195,13 @@ class TransD(BaseModel):
         self.model.proj_entity_embed.weight.data.copy_(torch.from_numpy(a_mat[n_relation:, :]))
         self.model.to(self.device)
 
-    def train(self, train_data: tuple, corrupter, tester,
-              optimizer_name: str='Adam', early_stop_patience: int=-1) -> float:
+    def train(self, train_data: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+              corrupter, tester, early_stop_patience: int=-1) -> float:
         if self.use_gpu:
-            self.set_device(self.use_gpu)
+            self.device = config.set_device(self.use_gpu)
          
         head, relation, tail = train_data
-        n_train = len(head)
-        optimizer_class = {'Adam': Adam, 'SGD': SGD, 'AdamW': AdamW, 'RMSprop': RMSprop, 'Adagrad': Adagrad}.get(optimizer_name, Adam)
-        optimizer = optimizer_class(self.model.parameters())
-        
+        n_train = len(head)        
         best_perf = 0.0
         patience_counter = 0
         for epoch in range(self.n_epoch):
@@ -221,7 +222,7 @@ class TransD(BaseModel):
                 self.model.zero_grad()
                 loss = torch.sum(self.model.pair_loss(Variable(h0), Variable(r), Variable(t0), Variable(h1), Variable(t1)))
                 loss.backward()
-                optimizer.step()
+                self.opt.step()
                 self.model.constraint()
                 epoch_loss += loss.item()
 
@@ -283,22 +284,22 @@ class DistMult(BaseModel):
         self.n_batch = self.model_config.n_batch
         self.epoch_per_test = self.model_config.epoch_per_test
 
+        self.optimizer_name = self.model_config.optimizer
+        self.lr = self.model_config.learning_rate
         self.weight_decay = self.lam / self.n_batch
+
         self.model = DistMultModule(self.n_entity, self.n_relation, self.model_config)
         self.model.to(self.device)
-
         self.is_distance_based = self.model.is_distance_based
+        self.opt = OPTIMIZER_MAP[self.optimizer_name](self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
 
-    def train(self, train_data: tuple, corrupter, tester,
-              optimizer_name: str='Adam', early_stop_patience: int=-1) -> float:
+    def train(self, train_data: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+              corrupter, tester, early_stop_patience: int=-1) -> float:
         if self.use_gpu:
-            self.set_device(self.use_gpu)
+            self.device = config.set_device(self.use_gpu)
          
         head, relation, tail = train_data
         n_train = len(head)
-        optimizer_class = {'Adam': Adam, 'SGD': SGD, 'AdamW': AdamW, 'RMSprop': RMSprop, 'Adagrad': Adagrad}.get(optimizer_name, Adam)
-        optimizer = optimizer_class(self.model.parameters(), weight_decay=self.weight_decay)
-        
         best_perf = 0.0
         patience_counter = 0
         for epoch in range(self.n_epoch):
@@ -320,7 +321,7 @@ class DistMult(BaseModel):
                 softmax_loss = self.model.softmax_loss(hs_var, rs_var, ts_var, label)
                 loss = torch.sum(softmax_loss)
                 loss.backward()
-                optimizer.step()
+                self.opt.step()
                 epoch_loss += loss.item()
 
             logging.info('Epoch %d/%d, Loss=%f', epoch + 1, self.n_epoch, epoch_loss / n_train)
@@ -388,23 +389,23 @@ class ComplEx(BaseModel):
         self.n_epoch = self.model_config.n_epoch
         self.n_batch = self.model_config.n_batch
         self.epoch_per_test = self.model_config.epoch_per_test
-        
+
+        self.optimizer_name = self.model_config.optimizer
+        self.lr = self.model_config.learning_rate
         self.weight_decay = self.lam / self.n_batch
+
         self.model = ComplExModule(self.n_entity, self.n_relation, self.model_config)
         self.model.to(self.device)
-
         self.is_distance_based = self.model.is_distance_based
+        self.opt = OPTIMIZER_MAP[self.optimizer_name](self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
 
-    def train(self, train_data: tuple, corrupter, tester,
-              optimizer_name: str='Adam', early_stop_patience: int=-1) -> float:
+    def train(self, train_data: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+              corrupter, tester, early_stop_patience: int=-1) -> float:
         if self.use_gpu:
-            self.set_device(self.use_gpu)
+            self.device = config.set_device(self.use_gpu)
             
         head, relation, tail = train_data
         n_train = len(head)
-        optimizer_class = {'Adam': Adam, 'SGD': SGD, 'AdamW': AdamW, 'RMSprop': RMSprop, 'Adagrad': Adagrad}.get(optimizer_name, Adam)
-        optimizer = optimizer_class(self.model.parameters(), weight_decay=self.weight_decay)
-        
         best_perf = 0.0
         patience_counter = 0
         for epoch in range(self.n_epoch):
@@ -426,7 +427,7 @@ class ComplEx(BaseModel):
                 softmax_loss = self.model.softmax_loss(hs_var, rs_var, ts_var, label)
                 loss = torch.sum(softmax_loss)
                 loss.backward()
-                optimizer.step()
+                self.opt.step()
                 epoch_loss += loss.item()
             logging.info('Epoch %d/%d, Loss=%f', epoch + 1, self.n_epoch, epoch_loss / n_train)
             if ((self.n_epoch >= self.epoch_per_test) and ((epoch + 1) % self.epoch_per_test == 0)):

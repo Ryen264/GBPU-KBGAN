@@ -128,6 +128,17 @@ def select_gpu() -> int:
         if gpu_mem[i] == min(gpu_mem):
             logging.info('All GPUs are occupied. Automatically selected GPU %d because it has the most free memory.', i)
             return i
+        
+def set_device(gpu_id: int) -> torch.device:
+    if gpu_id is not None and torch.cuda.is_available():
+        torch.cuda.set_device(gpu_id)
+        device = torch.device(f"cuda:{gpu_id}")
+        logging.info(f"Using GPU: {device}")
+        return device
+    else:
+        device = torch.device("cpu")
+        logging.info("No GPU available. Running on CPU.")
+        return device
 
 def logger_init() -> None:
     root_logger = logging.getLogger()

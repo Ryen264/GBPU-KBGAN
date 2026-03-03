@@ -14,7 +14,7 @@ import metrics
 
 EPSILON = 1e-30
 FILTER_RANKING_PENALTY = 1e30
-DEFAULT_OPTIMIZER_LR = 1e-3
+OPTIMIZER_MAP = {'Adam': Adam, 'SGD': SGD, 'AdamW': AdamW, 'RMSprop': RMSprop, 'Adagrad': Adagrad}
 
 class Component():
     def __init__(self, role: str, model_type: str, n_entity: int, n_relation: int):
@@ -54,13 +54,13 @@ class Component():
             raise ValueError("Component must be fitted before being loaded!")
 
         if self.model_type == "TransE":
-            self.model = TransE(self.n_entity, self.n_relation, epsilon=self.epsilon)
+            self.model = TransE(self.n_entity, self.n_relation)
         elif self.model_type == "TransD":
-            self.model = TransD(self.n_entity, self.n_relation, epsilon=self.epsilon)
+            self.model = TransD(self.n_entity, self.n_relation)
         elif self.model_type == "DistMult":
-            self.model = DistMult(self.n_entity, self.n_relation, epsilon=self.epsilon)
+            self.model = DistMult(self.n_entity, self.n_relation)
         elif self.model_type == "ComplEx":
-            self.model = ComplEx(self.n_entity, self.n_relation, epsilon=self.epsilon)
+            self.model = ComplEx(self.n_entity, self.n_relation)
         self.model.load(model_path)
         print(f"Loaded component successfully by: {model_path}")
 
@@ -76,7 +76,7 @@ class Component():
         return self.model.score(head_var, relation_var, tail_var)
 
     def train(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data_w_label: tuple,
-              optimizer_name: str='Adam', rank_class_balance: float = 1.0, early_stop_patience: int=-1,
+              rank_class_balance: float = 1.0, early_stop_patience: int=-1,
               rank_optimizing_metric: str='mrr', rank_filt: bool=True, rank_k_list: list=[1, 3, 10],
               class_optimizing_metric: str='accuracy', class_threshold: float=None) -> float:    
         config.overwrite_config_with_args(["--log.prefix=" + self.model_type + '_'])
@@ -97,8 +97,8 @@ class Component():
                                                                 optimizing_metric=class_optimizing_metric, threshold=class_threshold)
         tester = lambda: (rank_class_balance * rank_metrics()[rank_optimizing_metric] + class_metrics()[class_optimizing_metric]) / (rank_class_balance + 1)
 
-        best_perf = self.model.train(train_data, corrupter, tester,
-                                    optimizer_name=optimizer_name, early_stop_patience=early_stop_patience)
+        best_perf = self.model.train(train_data,
+                                     corrupter, tester, early_stop_patience=early_stop_patience)
         print(f'Trained component successfully: {self.model_type} model.')
         return best_perf
     
@@ -110,11 +110,10 @@ class Component():
         self.model.opt.step()
         self.model.constraint()
 
-    def set_optimizer(self, optimizer_name: str, lr: float = DEFAULT_OPTIMIZER_LR) -> None:
-        opt_map = {'Adam': Adam, 'SGD': SGD, 'AdamW': AdamW, 'RMSprop': RMSprop, 'Adagrad': Adagrad}
-        opt_cls = opt_map.get(optimizer_name, Adam)
+    def set_optimizer(self, optimizer_name: str, lr: float, weight_decay: float=0.0) -> None:
+        opt_cls = OPTIMIZER_MAP.get(optimizer_name, Adam)
         try:
-            self.model.opt = opt_cls(self.model.parameters(), lr=lr)
+            self.model.opt = opt_cls(self.model.parameters(), lr=lr, weight_decay=weight_decay)
         except (AttributeError, TypeError):
             pass
 
@@ -407,7 +406,7 @@ class KBGAN():
         print(f"Saved KBGAN (discriminator) successfully to: {filepath}")
         
     def train_components(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data_w_label: tuple,
-                        optimizer_name: str='Adam', rank_class_balance: float=5.0, early_stop_patience: int=-1,
+                        rank_class_balance: float=5.0, early_stop_patience: int=-1,
                         rank_optimizing_metric: str='mrr', rank_filt: bool=True, rank_k_list: list=[1, 3, 10],
                         class_optimizing_metric: str='accuracy', class_threshold: float=None) -> Tuple[float, float]:
         if not isinstance(train_data[0], torch.Tensor):
@@ -416,20 +415,21 @@ class KBGAN():
             valid_data_w_label = [torch.LongTensor(vec) for vec in valid_data_w_label]
 
         best_perf_d = self.discriminator.train(heads, tails, train_data, valid_data_w_label,
-                                                optimizer_name=optimizer_name, rank_class_balance=rank_class_balance, early_stop_patience=early_stop_patience,
+                                                rank_class_balance=rank_class_balance, early_stop_patience=early_stop_patience,
                                                 rank_optimizing_metric=rank_optimizing_metric, rank_filt=rank_filt, rank_k_list=rank_k_list,
                                                 class_optimizing_metric=class_optimizing_metric, class_threshold=class_threshold)
         print(f"Trained {self.discriminator_type} discriminator successfully with performance: {best_perf_d}")
 
         best_perf_g = self.generator.train(heads, tails, train_data, valid_data_w_label,
-                                            optimizer_name=optimizer_name, rank_class_balance=rank_class_balance, early_stop_patience=early_stop_patience,
+                                            rank_class_balance=rank_class_balance, early_stop_patience=early_stop_patience,
                                             rank_optimizing_metric=rank_optimizing_metric, rank_filt=rank_filt, rank_k_list=rank_k_list,
                                             class_optimizing_metric=class_optimizing_metric, class_threshold=class_threshold)
         print(f"Trained {self.generator_type} generator successfully with performance: {best_perf_g}")
         return best_perf_d, best_perf_g
            
     def train_kbgan(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data_w_label: tuple,
-                optimizer_name: str='Adam', optimizer_lr: float=DEFAULT_OPTIMIZER_LR, rank_class_balance: float=1.0, early_stop_patience: int=-1,
+                optimizer_name: str='Adagrad', optimizer_lr: float=0.01,
+                rank_class_balance: float=1.0, early_stop_patience: int=-1,
                 temperature: float=1.0, n_sample: int=20, n_epoch: int=5000, n_batch: int=100, epoch_per_test: int=100,
                 rank_optimizing_metric: str='mrr', rank_filt: bool=True, rank_k_list: list=[1, 3, 10],
                 class_optimizing_metric: str='accuracy', class_use_maxgood_minbad_threshold: bool=True) -> float:
@@ -438,13 +438,10 @@ class KBGAN():
         if not isinstance(valid_data_w_label[0], torch.Tensor):
             valid_data_w_label = [torch.LongTensor(vec) for vec in valid_data_w_label]
 
-        self.discriminator.set_optimizer(optimizer_name, lr=optimizer_lr)
-        self.generator.set_optimizer(optimizer_name, lr=optimizer_lr)
-
         # log_vars[0] for Ranking, log_vars[1] for Classification
         # Initializing at 0 means initial weight sigma=1
         log_vars = torch.nn.Parameter(torch.zeros(2, requires_grad=True, device=self.device)) # Ensure device matches model
-        log_vars_opt = Adam([log_vars], lr=optimizer_lr)
+        log_vars_opt = OPTIMIZER_MAP[optimizer_name]([log_vars], lr=optimizer_lr)
 
         # Define Classification Loss function
         bce_criterion = torch.nn.BCELoss()
