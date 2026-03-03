@@ -5,7 +5,7 @@ import torch
 import os
 import time
 
-_config = None
+_config = None # type: ConfigDict
 class ConfigDict(dict):
     __getattr__ = dict.__getitem__
 
@@ -13,7 +13,7 @@ def config(config_path: str) -> ConfigDict:
     """
     default: config("config_wn18rr.yaml")
     """
-    def _make_config_dict(obj):
+    def _make_config_dict(obj: dict) -> ConfigDict:
         if isinstance(obj, dict):
             return ConfigDict({k: _make_config_dict(v) for k, v in obj.items()})
         elif isinstance(obj, list):
@@ -36,7 +36,7 @@ def overwrite_config_with_args(args: list=[], sep: str='.') -> None:
     steps[-1] = "n_epoch"
     val=2
     """
-    def path_set(path: str, val: str, sep: str='.', auto_convert: bool=False):
+    def path_set(path: str, val: str, sep: str='.', auto_convert: bool=False) -> None:
         steps = path.split(sep)
         obj = _config
         for step in steps[:-1]:

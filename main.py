@@ -19,6 +19,7 @@ CLASS_USE_MAXGOOD_MINBAD_THRESHOLD = True   # Whether to use dynamic threshold b
 def main():
     # config_path = './config/config_' + DATASET + '.yaml'
     config_path = './config/config_' + DATASET + '_test.yaml' # Use the test config with smaller epochs for quick testing
+
     _config = config(config_path)
     working_task = _config.task # link-prediction / triple-classification / all (all for 'full-train' mode)
 
@@ -71,8 +72,8 @@ def main():
 
     # For task triple-classification, we need to read data with labels
     if _config.task == 'triple-classification' or _config.task == 'all':
-        valid_data_with_label = read_data(os.path.join('.', 'data', DATASET + '_w_labels', 'valid.txt'), kb_index, with_label=True)
-        test_data_with_label  = read_data(os.path.join('.', 'data', DATASET + '_w_labels', 'test.txt'), kb_index, with_label=True)
+        valid_data_with_labels = read_data(os.path.join('.', 'data', DATASET + '_w_labels', 'valid.txt'), kb_index, with_label=True)
+        test_data_with_labels  = read_data(os.path.join('.', 'data', DATASET + '_w_labels', 'test.txt'), kb_index, with_label=True)
         t_step = log_step("Labelled data load", t_step)
 
     # Convert to tensors
@@ -87,10 +88,10 @@ def main():
 
     if MODE == 'full-train':
         # Train 2 components
-        dis_best_perf, gen_best_perf = model.train_components(heads, tails, train_data, valid_data_with_label,
+        dis_best_perf, gen_best_perf = model.train_components(heads, tails, train_data, valid_data_with_labels,
                                                             optimizer_name=optimizer_name, rank_class_balance=rank_class_balance, early_stop_patience=early_stop_patience,
                                                             rank_optimizing_metric=RANK_OPTIMIZING_METRIC, rank_filt=RANK_FILT, rank_k_list=RANK_K_LIST,
-                                                            class_optimizing_metric=CLASS_OPTIMIZING_METRIC, class_use_maxgood_minbad_threshold=CLASS_USE_MAXGOOD_MINBAD_THRESHOLD)
+                                                            class_optimizing_metric=CLASS_OPTIMIZING_METRIC, class_threshold=None)
         t_step = log_step("Pretrain components", t_step)
         print("----------------")
 
@@ -106,18 +107,18 @@ def main():
         print("----------------")
 
         # Test 2 components just be trained on triple classification
-        dis_classification_metrics = model.discriminator.evaluate_on_classification(test_data_with_label,
+        dis_classification_metrics = model.discriminator.evaluate_on_classification(test_data_with_labels,
                                                                                     optimizing_metric=CLASS_OPTIMIZING_METRIC, threshold=None)
         print(f"Discriminator metrics on Triple Classification: {dis_classification_metrics}")
         t_step = log_step("Component triple classification eval", t_step)
 
-        gen_classification_metrics = model.generator.evaluate_on_classification(test_data_with_label,
+        gen_classification_metrics = model.generator.evaluate_on_classification(test_data_with_labels,
                                                                                 optimizing_metric=CLASS_OPTIMIZING_METRIC, threshold=None)
         print(f"Generator metrics on Triple Classification: {gen_classification_metrics}")
         print("----------------")
 
         # Train KBGAN
-        best_perf = model.train_kbgan(heads, tails, train_data, valid_data_with_label,
+        best_perf = model.train_kbgan(heads, tails, train_data, valid_data_with_labels,
                                     optimizer_name=optimizer_name, rank_class_balance=rank_class_balance, early_stop_patience=early_stop_patience,
                                     temperature=temperature, n_sample=n_sample, n_epoch=n_epoch, n_batch=n_batch, epoch_per_test=epoch_per_test,
                                     rank_optimizing_metric=RANK_OPTIMIZING_METRIC, rank_filt=RANK_FILT, rank_k_list=RANK_K_LIST,
@@ -135,7 +136,7 @@ def main():
         print("----------------")
 
         # Test KBGAN on triple classification
-        triple_classification_metrics = model.evaluate_on_triple_classification(test_data_with_label,
+        triple_classification_metrics = model.evaluate_on_triple_classification(test_data_with_labels,
                                                                                 optimizing_metric=CLASS_OPTIMIZING_METRIC, use_maxgood_minbad_threshold=CLASS_USE_MAXGOOD_MINBAD_THRESHOLD)
         print(f"Triple classification metrics:\n{triple_classification_metrics}")
         t_step = log_step("KBGAN triple classification eval", t_step)
@@ -147,7 +148,7 @@ def main():
         print("----------------")
 
         # Train KBGAN
-        best_perf = model.train_kbgan(heads, tails, train_data, valid_data_with_label,
+        best_perf = model.train_kbgan(heads, tails, train_data, valid_data_with_labels,
                                     optimizer_name=optimizer_name, rank_class_balance=rank_class_balance, early_stop_patience=early_stop_patience,
                                     temperature=temperature, n_sample=n_sample, n_epoch=n_epoch, n_batch=n_batch, epoch_per_test=epoch_per_test,
                                     rank_optimizing_metric=RANK_OPTIMIZING_METRIC, rank_filt=RANK_FILT, rank_k_list=RANK_K_LIST,
@@ -164,7 +165,7 @@ def main():
             t_step = log_step("KBGAN link prediction eval", t_step)
 
         if working_task == 'triple-classification' or working_task == 'all':
-            triple_classification_metrics = model.evaluate_on_triple_classification(test_data_with_label,
+            triple_classification_metrics = model.evaluate_on_triple_classification(test_data_with_labels,
                                                                                     optimizing_metric=CLASS_OPTIMIZING_METRIC, use_maxgood_minbad_threshold=CLASS_USE_MAXGOOD_MINBAD_THRESHOLD)
             print(f"Triple classification metrics:\n{triple_classification_metrics}") 
             t_step = log_step("KBGAN triple classification eval", t_step)
@@ -181,7 +182,7 @@ def main():
             print(f"Link prediction metrics:\n{link_prediction_metrics}")
 
         if working_task == 'triple-classification' or working_task == 'all':
-            triple_classification_metrics = model.evaluate_on_triple_classification(test_data_with_label,
+            triple_classification_metrics = model.evaluate_on_triple_classification(test_data_with_labels,
                                                                                     optimizing_metric=CLASS_OPTIMIZING_METRIC, use_maxgood_minbad_threshold=CLASS_USE_MAXGOOD_MINBAD_THRESHOLD)
             print(f"Triple classification metrics:\n{triple_classification_metrics}")
             t_step = log_step("KBGAN triple classification eval", t_step)

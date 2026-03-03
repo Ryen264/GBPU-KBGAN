@@ -14,15 +14,14 @@ from base_model import BaseModel, BaseModule
 EPSILON = 1e-30
 
 class TransEModule(BaseModule):
-    def __init__(self, n_entity: int, n_relation: int, config: config.Config):
+    def __init__(self, n_entity: int, n_relation: int, config: config.config):
         super().__init__()
         self.model_type = 'TransE'
-        self.model_config = config._config[self.model_type]
 
-        self.dim = self.model_config.dim
-        self.margin = self.model_config.margin
-        self.p = self.model_config.p
-        self.temp = self.model_config.temp
+        self.dim = config.dim
+        self.margin = config.margin
+        self.p = config.p
+        self.temp = config.temp
 
         self.n_entity, self.n_relation = n_entity, n_relation
         self.relation_embed = nn.Embedding(self.n_relation, self.dim)
@@ -120,15 +119,14 @@ class TransE(BaseModel):
         return best_perf
     
 class TransDModule(BaseModule):
-    def __init__(self, n_entity: int, n_relation: int, config: config.Config):
+    def __init__(self, n_entity: int, n_relation: int, config: config.config):
         super().__init__()
         self.model_type = 'TransD'
-        self.model_config = config._config[self.model_type]
 
-        self.dim = self.model_config.dim
-        self.margin = self.model_config.margin
-        self.p = self.model_config.p
-        self.temp = self.model_config.temp
+        self.dim = config.dim
+        self.margin = config.margin
+        self.p = config.p
+        self.temp = config.temp
         
         self.n_entity, self.n_relation = n_entity, n_relation
         self.relation_embed = nn.Embedding(self.n_relation, self.dim)
@@ -243,13 +241,12 @@ class TransD(BaseModel):
         return best_perf
     
 class DistMultModule(BaseModule):
-    def __init__(self, n_entity: int, n_relation: int, config: config.Config):
+    def __init__(self, n_entity: int, n_relation: int, config: config.config):
         super().__init__()
         self.model_type = 'DistMult'
-        self.model_config = config._config[self.model_type]
         
-        self.dim = self.model_config.dim
-        self.sigma = self.model_config.sigma
+        self.dim = config.dim
+        self.sigma = config.sigma
 
         self.n_entity, self.n_relation = n_entity, n_relation
         self.relation_embed = nn.Embedding(self.n_relation, self.dim)
@@ -291,7 +288,6 @@ class DistMult(BaseModel):
         self.model.to(self.device)
 
         self.is_distance_based = self.model.is_distance_based
-        self.margin = self.model_config.margin
 
     def train(self, train_data: tuple, corrupter, tester,
               optimizer_name: str='Adam', early_stop_patience: int=-1) -> float:
@@ -343,13 +339,12 @@ class DistMult(BaseModel):
         return best_perf
 
 class ComplExModule(BaseModule):
-    def __init__(self, n_entity: int, n_relation: int, config: config.Config):
+    def __init__(self, n_entity: int, n_relation: int, config: config.config):
         super().__init__()
         self.model_type = 'ComplEx'
-        self.model_config = config._config[self.model_type]
 
-        self.dim = self.model_config.dim
-        self.sigma = self.model_config.sigma
+        self.dim = config.dim
+        self.sigma = config.sigma
 
         self.n_entity, self.n_relation = n_entity, n_relation
         self.relation_re_embed = nn.Embedding(self.n_relation, self.dim)
@@ -399,7 +394,6 @@ class ComplEx(BaseModel):
         self.model.to(self.device)
 
         self.is_distance_based = self.model.is_distance_based
-        self.margin = self.model_config.margin
 
     def train(self, train_data: tuple, corrupter, tester,
               optimizer_name: str='Adam', early_stop_patience: int=-1) -> float:

@@ -74,7 +74,7 @@ class Component():
         head_var, relation_var, tail_var = Variable(head.to(self.device)), Variable(relation.to(self.device)), Variable(tail.to(self.device))
         return self.model.score(head_var, relation_var, tail_var)
 
-    def train(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data: tuple,
+    def train(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data_w_label: tuple,
               optimizer_name: str='Adam', rank_class_balance: float = 1.0, early_stop_patience: int=-1,
               rank_optimizing_metric: str='mrr', rank_filt: bool=True, rank_k_list: list=[1, 3, 10],
               class_optimizing_metric: str='accuracy', class_threshold: float=None) -> float:    
@@ -88,9 +88,11 @@ class Component():
         else:
             raise ValueError(f"Unsupported model type: {self.model_type}")
 
-        rank_metrics = lambda: self.evaluate_on_ranking(valid_data, heads, tails,
+        valid_data_no_label = valid_data_w_label[:3]
+        rank_metrics = lambda: self.evaluate_on_ranking(valid_data_no_label, heads, tails,
                                                         filt=rank_filt, k_list=rank_k_list)
-        class_metrics = lambda: self.evaluate_on_classification(valid_data,
+        
+        class_metrics = lambda: self.evaluate_on_classification(valid_data_w_label,
                                                                 optimizing_metric=class_optimizing_metric, threshold=class_threshold)
         tester = lambda: (rank_class_balance * rank_metrics()[rank_optimizing_metric] + class_metrics()[class_optimizing_metric]) / (rank_class_balance + 1)
 
@@ -181,10 +183,9 @@ class Component():
                             filt: bool=True, k_list: list=[1, 3, 10]) -> dict:
         mr_total = mrr_total = 0.0
         hits_total = [0] * len(k_list)
-        test_data_no_label = test_data[:3]
         count = 0
         with torch.no_grad():
-            for batch_head, batch_relation, batch_tail in batch_by_size(self.model.test_batch_size, *test_data_no_label):
+            for batch_head, batch_relation, batch_tail in batch_by_size(self.model.test_batch_size, *test_data):
                 batch_size = batch_head.size(0)
 
                 all_var = torch.arange(0, self.n_entity).unsqueeze(0).expand(batch_size, self.n_entity).long().to(self.device)
@@ -238,9 +239,9 @@ class Component():
         logging.info(ranking_metrics_str)
         return ranking_metrics
 
-    def evaluate_on_classification(self, test_data: tuple,
+    def evaluate_on_classification(self, test_data_w_label: tuple,
                                    optimizing_metric: str='accuracy', threshold: float=None) -> dict:       
-        def find_optimal_threshold(valid_data: tuple, labels: list, n_thresholds: int=100) -> float:
+        def find_optimal_threshold(valid_data: tuple, labels: list, n_thresholds: int=100) -> Tuple[float, bool]:
             """
             Find the optimal threshold for triple classification using validation data.
 
@@ -250,7 +251,8 @@ class Component():
                 n_thresholds: Number of threshold values to try
 
             Returns:
-                Optimal threshold value that maximizes F1 score
+                (Optimal threshold value, positive_if_lower)
+                where positive_if_lower=True means score < threshold predicts positive.
             """
             heads, relations, tails = valid_data
 
@@ -273,29 +275,39 @@ class Component():
             max_score = float(scores_array.max())
             threshold_values = np.linspace(min_score, max_score, n_thresholds)
 
-            best_val = 0.0
+            best_val = -float('inf')
             best_threshold = 0.0
+            best_positive_if_lower = self.model.is_distance_based
 
             for threshold in threshold_values:
-                if self.model.is_distance_based:
-                    predictions = np.where(scores_array < threshold, 1, 0).tolist()
+                predictions_lower = np.where(scores_array < threshold, 1, 0).tolist()
+                metrics_lower = metrics.classification_metrics(predictions_lower, labels, scores=scores_list)
+                test_val_lower = metrics_lower.get(optimizing_metric, 0.0)
+
+                predictions_higher = np.where(scores_array > threshold, 1, 0).tolist()
+                metrics_higher = metrics.classification_metrics(predictions_higher, labels, scores=scores_list)
+                test_val_higher = metrics_higher.get(optimizing_metric, 0.0)
+
+                if test_val_lower >= test_val_higher:
+                    candidate_val = test_val_lower
+                    candidate_positive_if_lower = True
                 else:
-                    predictions = np.where(scores_array > threshold, 1, 0).tolist()
-                
-                classification_metrics = metrics.classification_metrics(predictions, labels, scores=scores_list)
-                test_val = classification_metrics.get(optimizing_metric, 0.0)
-                
-                if test_val > best_val:
-                    best_val = test_val
+                    candidate_val = test_val_higher
+                    candidate_positive_if_lower = False
+
+                if candidate_val > best_val:
+                    best_val = candidate_val
                     best_threshold = threshold
+                    best_positive_if_lower = candidate_positive_if_lower
 
-            logging.info(f"Optimal threshold: {best_threshold:.4f} ({optimizing_metric}={best_val:.4f})")
-            return best_threshold
+            direction_str = '<' if best_positive_if_lower else '>'
+            logging.info(f"Optimal threshold: score {direction_str} {best_threshold:.4f} => positive ({optimizing_metric}={best_val:.4f})")
+            return best_threshold, best_positive_if_lower
 
-        if len(test_data) < 4:
-            raise ValueError("For classification metrics, test_data must include labels as the 4th element (heads, relations, tails, labels).")
-
-        heads_list, relations_list, tails_list, labels = test_data
+        if len(test_data_w_label) < 4:
+            raise ValueError("For classification metrics, test_data_w_label must include labels as the 4th element (heads, relations, tails, labels).")
+        
+        heads_list, relations_list, tails_list, labels = test_data_w_label
         scores_list = []
         true_labels = []
 
@@ -318,18 +330,21 @@ class Component():
 
         if threshold is None:
             n_thresholds = 100
-            threshold = find_optimal_threshold(valid_data=(heads_list, relations_list, tails_list), labels=true_labels, n_thresholds=n_thresholds)
-            logging.info(f"Determined optimal threshold for classification: {threshold:.4f} using validation data with {n_thresholds} thresholds.")
+            threshold, positive_if_lower = find_optimal_threshold(valid_data=(heads_list, relations_list, tails_list), labels=true_labels, n_thresholds=n_thresholds)
+            direction_str = '<' if positive_if_lower else '>'
+            logging.info(f"Determined optimal threshold for classification: score {direction_str} {threshold:.4f} => positive, using validation data with {n_thresholds} thresholds.")
+        else:
+            positive_if_lower = self.model.is_distance_based
 
         # Vectorized prediction generation
         scores_array = np.array(scores_list)
-        if self.model.is_distance_based:
+        if positive_if_lower:
             predictions = np.where(scores_array < threshold, 1, 0).tolist()
         else:
             predictions = np.where(scores_array > threshold, 1, 0).tolist()
 
-        # For distance-based models lower scores mean better; invert for AUC so higher is better
-        scores_for_auc = [-s for s in scores_list] if self.model.is_distance_based else scores_list
+        # Convert scores so that larger values indicate positive class for AUC
+        scores_for_auc = [-s for s in scores_list] if positive_if_lower else scores_list
 
         classification_metrics = metrics.classification_metrics(predictions, true_labels, scores=scores_for_auc)
         # Format metrics for cleaner output
@@ -419,7 +434,6 @@ class KBGAN():
         if not isinstance(valid_data_w_label[0], torch.Tensor):
             valid_data_w_label = [torch.LongTensor(vec) for vec in valid_data_w_label]
 
-        # Initialize optimizers according to optimizer_name for both models
         self.discriminator.set_optimizer(optimizer_name)
         self.generator.set_optimizer(optimizer_name)
 
@@ -455,7 +469,7 @@ class KBGAN():
                 
                 # --- Discriminator Step ---
                 # 1. Get Ranking Loss (and rewards for Generator)
-                loss_rank, rewards, max_d_good, min_d_bad = self.discriminator.discriminator_step(head_good=h_device, relation=r_device, tail_good=t_device,
+                loss_rank, rewards, max_d_good, min_d_bad = self.discriminator.discriminator_step(head=h_device, relation=r_device, tail=t_device,
                                                                                                   head_fake=head_smpl_device, tail_fake=tail_smpl_device,
                                                                                                   train=True)
 
@@ -531,7 +545,8 @@ class KBGAN():
                         epoch + 1, n_epoch, avg_loss, log_vars[0].item(), log_vars[1].item())
 
             if (epoch + 1) % epoch_per_test == 0:
-                rank_metrics = self.discriminator.evaluate_on_ranking(valid_data_w_label, heads, tails,
+                valid_data_no_label = valid_data_w_label[:3]
+                rank_metrics = self.discriminator.evaluate_on_ranking(valid_data_no_label, heads, tails,
                                                                       filt=rank_filt, k_list=rank_k_list)
                 
                 class_threshold = self.optimal_threshold if class_use_maxgood_minbad_threshold else None
@@ -566,10 +581,13 @@ class KBGAN():
                                                         filt=filt, k_list=k_list)
         return metrics
 
-    def evaluate_on_triple_classification(self, test_data_with_labels: tuple,
+    def evaluate_on_triple_classification(self, test_data_w_label: tuple,
                                           optimizing_metric: str='accuracy', use_maxgood_minbad_threshold: bool=True) -> dict:
+        if not isinstance(test_data_w_label[0], torch.Tensor):
+            test_data_w_label = [torch.LongTensor(vec) for vec in test_data_w_label]
+            
         print("Evaluating KBGAN discriminator on Triple Classification...")
         threshold = self.optimal_threshold if use_maxgood_minbad_threshold else None
-        metrics = self.discriminator.evaluate_on_classification(test_data_with_labels,
+        metrics = self.discriminator.evaluate_on_classification(test_data_w_label,
                                                                 optimizing_metric=optimizing_metric, threshold=threshold)
         return metrics
