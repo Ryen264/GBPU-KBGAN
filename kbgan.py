@@ -14,6 +14,7 @@ import metrics
 
 EPSILON = 1e-30
 FILTER_RANKING_PENALTY = 1e30
+DEFAULT_OPTIMIZER_LR = 1e-3
 
 class Component():
     def __init__(self, role: str, model_type: str, n_entity: int, n_relation: int):
@@ -109,11 +110,11 @@ class Component():
         self.model.opt.step()
         self.model.constraint()
 
-    def set_optimizer(self, optimizer_name: str) -> None:
+    def set_optimizer(self, optimizer_name: str, lr: float = DEFAULT_OPTIMIZER_LR) -> None:
         opt_map = {'Adam': Adam, 'SGD': SGD, 'AdamW': AdamW, 'RMSprop': RMSprop, 'Adagrad': Adagrad}
         opt_cls = opt_map.get(optimizer_name, Adam)
         try:
-            self.model.opt = opt_cls(self.model.parameters())
+            self.model.opt = opt_cls(self.model.parameters(), lr=lr)
         except (AttributeError, TypeError):
             pass
 
@@ -143,13 +144,11 @@ class Component():
         
         # Backward pass: update generator with REINFORCE
         if train:
-            print(f"Generator step: received rewards from discriminator, updating generator parameters with REINFORCE.")            
             self.opt_zero_grad()
             log_probs = nnf.log_softmax(logits, dim=-1)
             reinforce_loss = -torch.sum(Variable(rewards) * log_probs[row_idx.to(self.device), sample_idx.data])
             reinforce_loss.backward()
             self.opt_step()
-        print(f"Generator step: completed parameter update with REINFORCE.")
         yield None
        
     def discriminator_step(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor,
@@ -163,21 +162,26 @@ class Component():
         # Forward pass: compute losses and scores
         head_var, relation_var, tail_var = Variable(head.to(self.device)), Variable(relation.to(self.device)), Variable(tail.to(self.device))        
         head_fake_var, tail_fake_var = Variable(head_fake.to(self.device)), Variable(tail_fake.to(self.device))
-        
-        d_good = self.model.dist(head_var, relation_var, tail_var)
-        d_bad = self.model.dist(head_fake_var, relation_var, tail_fake_var)
+
+        if head_fake_var.dim() == relation_var.dim() + 1:
+            relation_fake_var = relation_var.unsqueeze(1).expand_as(head_fake_var)
+            d_good = self.model.dist(head_var, relation_var, tail_var).unsqueeze(1).expand_as(head_fake_var)
+        else:
+            relation_fake_var = relation_var
+            d_good = self.model.dist(head_var, relation_var, tail_var)
+
+        d_bad = self.model.dist(head_fake_var, relation_fake_var, tail_fake_var)
         pair_loss = nnf.relu(d_good - d_bad + self.model.margin)
-        fake_scores = self.model.score(head_fake_var, relation_var, tail_fake_var)
+        fake_scores = self.model.score(head_fake_var, relation_fake_var, tail_fake_var)
                 
         # Backward pass: update discriminator
         if train:
-            print(f"Discriminator step: updating discriminator parameters with pairwise loss.")
             self.opt_zero_grad()
             sum_loss = torch.sum(pair_loss)
             sum_loss.backward()
             self.opt_step()
-        print(f"Discriminator step: pair_loss={pair_loss.data.mean():.4f}, fake_scores={fake_scores.data.mean():.4f}, d_good max={d_good.data.max().item():.4f}, d_bad min={d_bad.data.min().item():.4f}")
-        return pair_loss.data, -fake_scores.data, d_good.data.max().item(), d_bad.data.min().item()
+        print(f"Discriminator step: pair_loss={pair_loss.detach().mean().item():.4f}, fake_scores={fake_scores.detach().mean().item():.4f}, d_good max={d_good.detach().max().item():.4f}, d_bad min={d_bad.detach().min().item():.4f}")
+        return pair_loss.detach(), -fake_scores.detach(), d_good.detach().max().item(), d_bad.detach().min().item()
 
     def evaluate_on_ranking(self, test_data: tuple, heads: torch.Tensor, tails: torch.Tensor,
                             filt: bool=True, k_list: list=[1, 3, 10]) -> dict:
@@ -425,7 +429,7 @@ class KBGAN():
         return best_perf_d, best_perf_g
            
     def train_kbgan(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data_w_label: tuple,
-                optimizer_name: str='Adam', rank_class_balance: float=1.0, early_stop_patience: int=-1,
+                optimizer_name: str='Adam', optimizer_lr: float=DEFAULT_OPTIMIZER_LR, rank_class_balance: float=1.0, early_stop_patience: int=-1,
                 temperature: float=1.0, n_sample: int=20, n_epoch: int=5000, n_batch: int=100, epoch_per_test: int=100,
                 rank_optimizing_metric: str='mrr', rank_filt: bool=True, rank_k_list: list=[1, 3, 10],
                 class_optimizing_metric: str='accuracy', class_use_maxgood_minbad_threshold: bool=True) -> float:
@@ -434,12 +438,13 @@ class KBGAN():
         if not isinstance(valid_data_w_label[0], torch.Tensor):
             valid_data_w_label = [torch.LongTensor(vec) for vec in valid_data_w_label]
 
-        self.discriminator.set_optimizer(optimizer_name)
-        self.generator.set_optimizer(optimizer_name)
+        self.discriminator.set_optimizer(optimizer_name, lr=optimizer_lr)
+        self.generator.set_optimizer(optimizer_name, lr=optimizer_lr)
 
         # log_vars[0] for Ranking, log_vars[1] for Classification
         # Initializing at 0 means initial weight sigma=1
         log_vars = torch.nn.Parameter(torch.zeros(2, requires_grad=True, device=self.device)) # Ensure device matches model
+        log_vars_opt = Adam([log_vars], lr=optimizer_lr)
 
         # Define Classification Loss function
         bce_criterion = torch.nn.BCELoss()
@@ -456,20 +461,17 @@ class KBGAN():
             epoch_reward = 0
 
             head_cand, relation_cand, tail_cand = corrupter.corrupt(head, relation, tail, keep_truth=False)
-            for h, r, t, hs, rs, ts in batch_by_num(n_batch, head, relation, tail, head_cand, relation_cand, tail_cand, n_sample=n_train):
-                # Move tensors to device
-                h_device, r_device, t_device = h.to(self.device), r.to(self.device), t.to(self.device)
-                
+            for h, r, t, hs, rs, ts in batch_by_num(n_batch, head, relation, tail, head_cand, relation_cand, tail_cand, n_sample=n_train):             
                 # --- Generator Step ---
                 gen_step = self.generator.generator_step(hs, rs, ts,
                                                         n_sample=n_sample, temperature=temperature,
                                                         train=True)
                 head_smpl, tail_smpl = next(gen_step)
-                head_smpl_device, tail_smpl_device = head_smpl.squeeze().to(self.device), tail_smpl.squeeze().to(self.device)
+                head_smpl_device, tail_smpl_device = head_smpl.to(self.device), tail_smpl.to(self.device)
                 
                 # --- Discriminator Step ---
                 # 1. Get Ranking Loss (and rewards for Generator)
-                loss_rank, rewards, max_d_good, min_d_bad = self.discriminator.discriminator_step(head=h_device, relation=r_device, tail=t_device,
+                loss_rank, rewards, max_d_good, min_d_bad = self.discriminator.discriminator_step(head=h, relation=r, tail=t,
                                                                                                   head_fake=head_smpl_device, tail_fake=tail_smpl_device,
                                                                                                   train=True)
 
@@ -491,8 +493,12 @@ class KBGAN():
 
                 # 2. Get Classification Loss (BCE)
                 # We need raw scores from the discriminator to compute BCE.
-                pos_score = self.discriminator.score(h_device, r_device, t_device)
-                neg_score = self.discriminator.score(head_smpl_device, r_device, tail_smpl_device)
+                pos_score = self.discriminator.score(h, r, t)
+                if head_smpl_device.dim() == r.dim() + 1:
+                    relation_for_neg = r.unsqueeze(1).expand_as(head_smpl_device)
+                else:
+                    relation_for_neg = r
+                neg_score = self.discriminator.score(head_smpl_device, relation_for_neg, tail_smpl_device)
                 
                 # Normalize scores to [0, 1] using sigmoid and clamp to avoid numerical issues
                 pos_score_norm = torch.clamp(torch.sigmoid(pos_score), min=EPSILON, max=1.0-EPSILON).float()
@@ -520,10 +526,12 @@ class KBGAN():
 
                 # Optimizer Step
                 self.discriminator.opt_zero_grad()
+                log_vars_opt.zero_grad()
                 total_loss.backward()
 
                 # Apply entity embedding constraints (e.g. norm <= 1)
                 self.discriminator.opt_step()
+                log_vars_opt.step()
 
                 # Update Metrics
                 epoch_reward += torch.sum(rewards)
@@ -534,15 +542,18 @@ class KBGAN():
 
                 # Update generator with rewards
                 try:
-                    gen_step.send(rewards.unsqueeze(1))
+                    rewards_for_gen = rewards.unsqueeze(1) if rewards.dim() == 1 else rewards
+                    gen_step.send(rewards_for_gen)
                 except StopIteration:
                     pass
                 
             avg_loss = epoch_d_loss / n_train
             avg_reward = epoch_reward / n_train
 
-            logging.info('Epoch %d/%d, Joint_Loss=%f, Rank_W=%f, Class_W=%f', 
-                        epoch + 1, n_epoch, avg_loss, log_vars[0].item(), log_vars[1].item())
+            rank_weight = torch.exp(-log_vars[0]).item()
+            class_weight = torch.exp(-log_vars[1]).item()
+            logging.info('Epoch %d/%d, Joint_Loss=%f, Rank_logVar=%f, Class_logVar=%f, Rank_W=%f, Class_W=%f', 
+                        epoch + 1, n_epoch, avg_loss, log_vars[0].item(), log_vars[1].item(), rank_weight, class_weight)
 
             if (epoch + 1) % epoch_per_test == 0:
                 valid_data_no_label = valid_data_w_label[:3]

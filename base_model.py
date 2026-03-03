@@ -94,22 +94,13 @@ class BaseModel(object):
         return self.model.parameters(recurse)
     
     def score(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
-        head_var = Variable(head.to(self.device))
-        relation_var = Variable(relation.to(self.device))
-        tail_var = Variable(tail.to(self.device))
-        return self.model.score(head_var, relation_var, tail_var)
+        return self.model.score(head, relation, tail)
 
     def dist(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
-        head_var = Variable(head.to(self.device))
-        relation_var = Variable(relation.to(self.device))
-        tail_var = Variable(tail.to(self.device))
-        return self.model.dist(head_var, relation_var, tail_var)
+        return self.model.dist(head, relation, tail)
 
     def prob_logit(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
-        head_var = Variable(head.to(self.device))
-        relation_var = Variable(relation.to(self.device))
-        tail_var = Variable(tail.to(self.device))
-        return self.model.prob_logit(head_var, relation_var, tail_var)
+        return self.model.prob_logit(head, relation, tail)
 
     def gen_step(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor,
                  n_sample: int=1, temperature: float=1.0, train: bool=True):
