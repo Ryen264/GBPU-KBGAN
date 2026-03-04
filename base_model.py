@@ -65,7 +65,6 @@ class BaseModel(object):
         self.n_entity = n_entity
         self.n_relation = n_relation
 
-        self.device = None
         self.model_path = None 
         self.weight_decay = 0.0
         self.model = None           # type: BaseModule
@@ -79,7 +78,7 @@ class BaseModel(object):
         self.test_batch_size = config._config.test_batch_size
 
     def load(self, filepath: str) -> None:
-        self.model.load_state_dict(torch.load(filepath, map_location=self.device))
+        self.model.load_state_dict(torch.load(filepath, map_location=config.device))
 
     def save(self, filepath: str=None) -> None:
         if filepath is None:
@@ -111,9 +110,9 @@ class BaseModel(object):
 
         # Forward pass: generate samples
         n, m = tail.size()
-        relation_var = Variable(relation.to(self.device))
-        head_var = Variable(head.to(self.device))
-        tail_var = Variable(tail.to(self.device))
+        relation_var = Variable(relation.to(config.device))
+        head_var = Variable(head.to(config.device))
+        tail_var = Variable(tail.to(config.device))
 
         logits = self.model.prob_logit(head_var, relation_var, tail_var) / temperature
         probs = nnf.softmax(logits)
@@ -140,11 +139,11 @@ class BaseModel(object):
         if not hasattr(self, 'opt'):
             self.opt = Adam(self.model.parameters(), weight_decay=self.weight_decay)
 
-        head_good_var = Variable(head_good.to(self.device))
-        relation_var = Variable(relation.to(self.device))
-        tail_good_var = Variable(tail_good.to(self.device))
-        head_bad_var = Variable(head_bad.to(self.device))
-        tail_bad_var = Variable(tail_bad.to(self.device))
+        head_good_var = Variable(head_good.to(config.device))
+        relation_var = Variable(relation.to(config.device))
+        tail_good_var = Variable(tail_good.to(config.device))
+        head_bad_var = Variable(head_bad.to(config.device))
+        tail_bad_var = Variable(tail_bad.to(config.device))
 
         losses = self.model.pair_loss(head_good_var, relation_var, tail_good_var, head_bad_var, tail_bad_var)
         fake_scores = self.model.score(head_bad_var, relation_var, tail_bad_var)
@@ -165,10 +164,10 @@ class BaseModel(object):
             for batch_head, batch_relation, batch_tail in batch_by_size(self.test_batch_size, *test_data_no_label):
                 batch_size = batch_head.size(0)
 
-                head_var = batch_head.unsqueeze(1).expand(batch_size, self.n_entity).to(self.device)
-                relation_var = batch_relation.unsqueeze(1).expand(batch_size, self.n_entity).to(self.device)
-                tail_var = batch_tail.unsqueeze(1).expand(batch_size, self.n_entity).to(self.device)
-                all_var = torch.arange(0, self.n_entity).unsqueeze(0).expand(batch_size, self.n_entity).long().to(self.device)
+                head_var = batch_head.unsqueeze(1).expand(batch_size, self.n_entity).to(config.device)
+                relation_var = batch_relation.unsqueeze(1).expand(batch_size, self.n_entity).to(config.device)
+                tail_var = batch_tail.unsqueeze(1).expand(batch_size, self.n_entity).to(config.device)
+                all_var = torch.arange(0, self.n_entity).unsqueeze(0).expand(batch_size, self.n_entity).long().to(config.device)
 
                 batch_head_scores = self.model.score(all_var, relation_var, tail_var)
                 batch_tail_scores = self.model.score(head_var, relation_var, all_var)
@@ -182,13 +181,13 @@ class BaseModel(object):
                         key_head = (tail_id, relation_id)
                         if key_head in heads and heads[key_head]._nnz() > 1:
                             tmp = head_scores[head_id].item()
-                            head_scores += heads[key_head].to(self.device) * FILTER_RANKING_PENALTY
+                            head_scores += heads[key_head].to(config.device) * FILTER_RANKING_PENALTY
                             head_scores[head_id] = tmp
                             
                         key_tail = (head_id, relation_id)
                         if key_tail in tails and tails[key_tail]._nnz() > 1:
                             tmp = tail_scores[tail_id].item()
-                            tail_scores += tails[key_tail].to(self.device) * FILTER_RANKING_PENALTY
+                            tail_scores += tails[key_tail].to(config.device) * FILTER_RANKING_PENALTY
                             tail_scores[tail_id] = tmp
 
                     head_metrics = ranking_metrics(head_scores, head_id, k_list=k_list)
