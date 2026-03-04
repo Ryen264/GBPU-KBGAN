@@ -3,18 +3,17 @@ import logging
 import subprocess
 import torch
 import os
-import datetime
+import time
 
-_config = None
-
+_config = None # type: ConfigDict
 class ConfigDict(dict):
     __getattr__ = dict.__getitem__
 
-def config(config_path='./config/config_wn18rr.yaml'):
+def config(config_path: str) -> ConfigDict:
     """
     default: config("config_wn18rr.yaml")
     """
-    def _make_config_dict(obj):
+    def _make_config_dict(obj: dict) -> ConfigDict:
         if isinstance(obj, dict):
             return ConfigDict({k: _make_config_dict(v) for k, v in obj.items()})
         elif isinstance(obj, list):
@@ -28,7 +27,7 @@ def config(config_path='./config/config_wn18rr.yaml'):
             _config = _make_config_dict(yaml.load(f, Loader=yaml.FullLoader))
     return _config
 
-def overwrite_config_with_args(args=[], sep='.'):
+def overwrite_config_with_args(args: list=[], sep: str='.') -> None:
     """
     Manually pass parameters. E.g. overwrite_config_with_args(["--pretrain_config=TransD"])
     TransE.n_epoch=2
@@ -37,7 +36,7 @@ def overwrite_config_with_args(args=[], sep='.'):
     steps[-1] = "n_epoch"
     val=2
     """
-    def path_set(path, val, sep='.', auto_convert=False):
+    def path_set(path: str, val: str, sep: str='.', auto_convert: bool=False) -> None:
         steps = path.split(sep)
         obj = _config
         for step in steps[:-1]:
@@ -64,8 +63,8 @@ def overwrite_config_with_args(args=[], sep='.'):
             if path != 'config':
                 path_set(path, val, sep, auto_convert=True)
 
-def dump_config():
-    def _dump_config(obj, prefix):
+def dump_config() -> None:
+    def _dump_config(obj: dict, prefix: tuple) -> None:
         if isinstance(obj, dict):
             for k, v in obj.items():
                 _dump_config(v, prefix + (k,))
@@ -76,16 +75,13 @@ def dump_config():
             logging.debug('%s=%s', '.'.join(prefix), repr(obj))
     return _dump_config(_config, tuple())
 
-
-def select_gpu():
+def select_gpu() -> int:
     if not torch.cuda.is_available():
         logging.warning("No GPU available. Running on CPU.")
         return None
 
     try:
-        nvidia_info = subprocess.run(
-            ['nvidia-smi'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True
-        )
+        nvidia_info = subprocess.run(['nvidia-smi'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
     except (FileNotFoundError, subprocess.CalledProcessError):
         logging.warning("nvidia-smi not found or failed. Running on CPU.")
         return None
@@ -132,8 +128,19 @@ def select_gpu():
         if gpu_mem[i] == min(gpu_mem):
             logging.info('All GPUs are occupied. Automatically selected GPU %d because it has the most free memory.', i)
             return i
+        
+def set_device(gpu_id: int) -> torch.device:
+    if gpu_id is not None and torch.cuda.is_available():
+        torch.cuda.set_device(gpu_id)
+        device = torch.device(f"cuda:{gpu_id}")
+        logging.info(f"Using GPU: {device}")
+        return device
+    else:
+        device = torch.device("cpu")
+        logging.info("No GPU available. Running on CPU.")
+        return device
 
-def logger_init():
+def logger_init() -> None:
     root_logger = logging.getLogger()
     root_logger.handlers.clear()
     root_logger.setLevel(logging.DEBUG)
@@ -142,19 +149,22 @@ def logger_init():
     console_handler.setFormatter(logging.Formatter('%(module)15s %(asctime)s %(message)s', datefmt='%H:%M:%S'))
     root_logger.addHandler(console_handler)
 
-    if (config().log.to_file):
-        log_dir = os.path.join('.', 'logs', config().dataset, config().task)
+    if (_config.log.to_file):
+        log_dir = os.path.join('.', 'logs', _config.dataset, _config.task)
         os.makedirs(log_dir, exist_ok=True)
-        log_filename = os.path.join(
-            log_dir,
-            _config.log.prefix + datetime.datetime.now().strftime("%m%d%H%M%S") + ".log"
-        )
+        log_filename = os.path.join(log_dir, _config.log.prefix + time.strftime("%m%d%H%M%S") + ".log")
         file_handler = logging.FileHandler(log_filename)
         file_handler.setFormatter(logging.Formatter('%(module)15s %(asctime)s %(message)s', datefmt='%H:%M:%S'))
         root_logger.addHandler(file_handler)
 
-    if config().log.dump_config:
+    if (_config.log.dump_config):
         dump_config()
+
+def log_step(label: str, start_ts: float) -> float:
+    """Print elapsed time for a pipeline step and return a new start timestamp."""
+    elapsed = time.perf_counter() - start_ts
+    print(f"[TIMER] {label}: {elapsed:.2f}s")
+    return time.perf_counter()
 
 gpu_id = select_gpu()
 device = None

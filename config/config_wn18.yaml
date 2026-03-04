@@ -2,17 +2,16 @@ g_config: DistMult
 d_config: TransE
 test_batch_size: 100
 dataset: wn18
-task: link-prediction
+task: all
 KBGAN:
+  optimizer_name: Adam
+  rank_class_balance: 1.0
+  early_stop_patience: -1
+  temperature: 1.0
   n_sample: 20
   n_epoch: 5000
   n_batch: 100
   epoch_per_test: 100
-  temperature: 1.0
-  early_stopping_pretrain: false
-  early_stopping_train: false
-  patience: 10
-  optimizer_name: Adam
 TransE:
   dim: 50
   margin: 3
@@ -32,6 +31,7 @@ TransD:
 DistMult:
   dim: 50
   lam: 0.1
+  sigma: 0.2
   n_sample: 20
   sample_freq: 1
   n_epoch: 1000
@@ -41,6 +41,7 @@ DistMult:
 ComplEx:
   dim: 25
   lam: 0.1
+  sigma: 0.2
   n_sample: 20
   sample_freq: 1
   n_epoch: 1000
@@ -49,6 +50,6 @@ ComplEx:
   model_file: ComplEx.mdl
 log:
   dump_config: false
-  to_file: false
+  to_file: true
   dir: ./log
-  prefix:
+  prefix: ""
