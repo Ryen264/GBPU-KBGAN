@@ -6,7 +6,6 @@ task: all
 KBGAN:
   optimizer: Adagrad
   learning_rate: 0.01
-  optimizer_name: Adam
   rank_class_balance: 1.0
   early_stop_patience: -1
   temperature: 1.0
