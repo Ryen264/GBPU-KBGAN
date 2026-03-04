@@ -53,9 +53,6 @@ class TransEModule(BaseModule):
 
 class TransE(BaseModel):
     def __init__(self, n_entity: int, n_relation: int):
-        self.use_gpu = (config.device.type == 'cuda')
-        self.device = torch.device('cuda' if self.use_gpu else 'cpu')
-
         super().__init__(n_entity, n_relation)
         self.model_type = 'TransE'
         self.model_config = config._config[self.model_type]
@@ -69,16 +66,13 @@ class TransE(BaseModel):
         self.lr = self.model_config.learning_rate
 
         self.model = TransEModule(self.n_entity, self.n_relation, self.model_config)
-        self.model.to(self.device)
+        self.model.to(config.device)
         self.is_distance_based = self.model.is_distance_based
         self.margin = self.model.margin
         self.opt = OPTIMIZER_MAP[self.optimizer_name](self.model.parameters(), lr=self.lr)
 
     def train(self, train_data: Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
               corrupter, tester, early_stop_patience: int=-1) -> float:
-        if self.use_gpu:
-            self.device = config.set_device(self.use_gpu)
-
         head, relation, tail = train_data
         n_train = len(head)
         best_perf = 0.0
@@ -90,11 +84,11 @@ class TransE(BaseModel):
             relation = relation[rand_idx]
             tail = tail[rand_idx]
             head_corrupted, tail_corrupted = corrupter.corrupt(head, relation, tail)
-            head_device = head.to(self.device)
-            relation_device = relation.to(self.device)
-            tail_device = tail.to(self.device)
-            head_corrupted = head_corrupted.to(self.device)
-            tail_corrupted = tail_corrupted.to(self.device)
+            head_device = head.to(config.device)
+            relation_device = relation.to(config.device)
+            tail_device = tail.to(config.device)
+            head_corrupted = head_corrupted.to(config.device)
+            tail_corrupted = tail_corrupted.to(config.device)
             
             for h0, r, t0, h1, t1 in batch_by_num(self.n_batch, head_device, relation_device, tail_device,
                                                   head_corrupted, tail_corrupted, n_sample=n_train):
@@ -164,8 +158,6 @@ class TransDModule(BaseModule):
 
 class TransD(BaseModel):
     def __init__(self, n_entity: int, n_relation: int):
-        self.use_gpu = (config.device.type == 'cuda')
-        self.device = torch.device('cuda' if self.use_gpu else 'cpu')
         super().__init__(n_entity, n_relation)
         self.model_type = 'TransD'
         self.model_config = config._config[self.model_type]
@@ -179,7 +171,7 @@ class TransD(BaseModel):
         self.lr = self.model_config.learning_rate
 
         self.model = TransDModule(self.n_entity, self.n_relation, self.model_config)
-        self.model.to(self.device)
+        self.model.to(config.device)
         self.is_distance_based = self.model.is_distance_based
         self.margin = self.model.margin
         self.opt = OPTIMIZER_MAP[self.optimizer_name](self.model.parameters(), lr=self.lr)
@@ -193,13 +185,10 @@ class TransD(BaseModel):
         a_mat = np.loadtxt(os.path.join(vecpath, 'A.vec'))
         self.model.proj_relation_embed.weight.data.copy_(torch.from_numpy(a_mat[:n_relation, :]))
         self.model.proj_entity_embed.weight.data.copy_(torch.from_numpy(a_mat[n_relation:, :]))
-        self.model.to(self.device)
+        self.model.to(config.device)
 
     def train(self, train_data: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
               corrupter, tester, early_stop_patience: int=-1) -> float:
-        if self.use_gpu:
-            self.device = config.set_device(self.use_gpu)
-         
         head, relation, tail = train_data
         n_train = len(head)        
         best_perf = 0.0
@@ -211,11 +200,11 @@ class TransD(BaseModel):
             relation = relation[rand_idx]
             tail = tail[rand_idx]
             head_corrupted, tail_corrupted = corrupter.corrupt(head, relation, tail)
-            head_device = head.to(self.device)
-            relation_device = relation.to(self.device)
-            tail_device = tail.to(self.device)
-            head_corrupted = head_corrupted.to(self.device)
-            tail_corrupted = tail_corrupted.to(self.device)
+            head_device = head.to(config.device)
+            relation_device = relation.to(config.device)
+            tail_device = tail.to(config.device)
+            head_corrupted = head_corrupted.to(config.device)
+            tail_corrupted = tail_corrupted.to(config.device)
             
             for h0, r, t0, h1, t1 in batch_by_num(self.n_batch, head_device, relation_device, tail_device,
                                                   head_corrupted, tail_corrupted, n_sample=n_train):
@@ -270,8 +259,6 @@ class DistMultModule(BaseModule):
 
 class DistMult(BaseModel):
     def __init__(self, n_entity: int, n_relation: int):
-        self.use_gpu = (config.device.type == 'cuda')
-        self.device = torch.device('cuda' if self.use_gpu else 'cpu')
         super().__init__(n_entity, n_relation)
         self.model_type = 'DistMult'
         self.model_config = config._config[self.model_type]
@@ -289,15 +276,12 @@ class DistMult(BaseModel):
         self.weight_decay = self.lam / self.n_batch
 
         self.model = DistMultModule(self.n_entity, self.n_relation, self.model_config)
-        self.model.to(self.device)
+        self.model.to(config.device)
         self.is_distance_based = self.model.is_distance_based
         self.opt = OPTIMIZER_MAP[self.optimizer_name](self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
 
     def train(self, train_data: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
               corrupter, tester, early_stop_patience: int=-1) -> float:
-        if self.use_gpu:
-            self.device = config.set_device(self.use_gpu)
-         
         head, relation, tail = train_data
         n_train = len(head)
         best_perf = 0.0
@@ -310,13 +294,13 @@ class DistMult(BaseModel):
                 relation = relation[rand_idx]
                 tail = tail[rand_idx]
                 head_corrupted, relation_corrupted, tail_corrupted = corrupter.corrupt(head, relation, tail)
-                head_corrupted = head_corrupted.to(self.device)
-                relation_corrupted = relation_corrupted.to(self.device)
-                tail_corrupted = tail_corrupted.to(self.device)
+                head_corrupted = head_corrupted.to(config.device)
+                relation_corrupted = relation_corrupted.to(config.device)
+                tail_corrupted = tail_corrupted.to(config.device)
 
             for hs, rs, ts in batch_by_num(self.n_batch, head_corrupted, relation_corrupted, tail_corrupted, n_sample=n_train):
                 self.model.zero_grad()
-                label = torch.zeros(len(hs)).type(torch.LongTensor).to(self.device)
+                label = torch.zeros(len(hs)).type(torch.LongTensor).to(config.device)
                 hs_var, rs_var, ts_var = Variable(hs), Variable(rs), Variable(ts)
                 softmax_loss = self.model.softmax_loss(hs_var, rs_var, ts_var, label)
                 loss = torch.sum(softmax_loss)
@@ -376,8 +360,6 @@ class ComplExModule(BaseModule):
 
 class ComplEx(BaseModel):
     def __init__(self, n_entity: int, n_relation: int):
-        self.use_gpu = (config.device.type == 'cuda')
-        self.device = torch.device('cuda' if self.use_gpu else 'cpu')
         super().__init__(n_entity, n_relation)
         self.model_type = 'ComplEx'
         self.model_config = config._config[self.model_type]
@@ -395,15 +377,12 @@ class ComplEx(BaseModel):
         self.weight_decay = self.lam / self.n_batch
 
         self.model = ComplExModule(self.n_entity, self.n_relation, self.model_config)
-        self.model.to(self.device)
+        self.model.to(config.device)
         self.is_distance_based = self.model.is_distance_based
         self.opt = OPTIMIZER_MAP[self.optimizer_name](self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
 
     def train(self, train_data: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
-              corrupter, tester, early_stop_patience: int=-1) -> float:
-        if self.use_gpu:
-            self.device = config.set_device(self.use_gpu)
-            
+              corrupter, tester, early_stop_patience: int=-1) -> float:            
         head, relation, tail = train_data
         n_train = len(head)
         best_perf = 0.0
@@ -416,13 +395,13 @@ class ComplEx(BaseModel):
                 relation = relation[rand_idx]
                 tail = tail[rand_idx]
                 head_corrupted, relation_corrupted, tail_corrupted = corrupter.corrupt(head, relation, tail)
-                head_corrupted = head_corrupted.to(self.device)
-                relation_corrupted = relation_corrupted.to(self.device)
-                tail_corrupted = tail_corrupted.to(self.device)
+                head_corrupted = head_corrupted.to(config.device)
+                relation_corrupted = relation_corrupted.to(config.device)
+                tail_corrupted = tail_corrupted.to(config.device)
 
             for hs, rs, ts in batch_by_num(self.n_batch, head_corrupted, relation_corrupted, tail_corrupted, n_sample=n_train):
                 self.model.zero_grad()
-                label = torch.zeros(len(hs)).type(torch.LongTensor).to(self.device)
+                label = torch.zeros(len(hs)).type(torch.LongTensor).to(config.device)
                 hs_var, rs_var, ts_var = Variable(hs), Variable(rs), Variable(ts)
                 softmax_loss = self.model.softmax_loss(hs_var, rs_var, ts_var, label)
                 loss = torch.sum(softmax_loss)

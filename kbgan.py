@@ -45,7 +45,6 @@ class Component():
         elif self.model_type == 'ComplEx':
             self.model = ComplEx(self.n_entity, self.n_relation)
 
-        self.device = self.model.device
         self.model_path = self.model.model_path
         print(f"Initialized component successfully: {self.model_type} model with role {self.role}, n_entity={self.n_entity}, n_relation={self.n_relation}.")
 
@@ -72,7 +71,7 @@ class Component():
         print(f"Saved component successfully by: {model_path}")
 
     def score(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
-        head_var, relation_var, tail_var = Variable(head.to(self.device)), Variable(relation.to(self.device)), Variable(tail.to(self.device))
+        head_var, relation_var, tail_var = Variable(head.to(config.device)), Variable(relation.to(config.device)), Variable(tail.to(config.device))
         return self.model.score(head_var, relation_var, tail_var)
 
     def train(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data_w_label: tuple,
@@ -128,7 +127,7 @@ class Component():
         # Forward pass: generate samples
         n, m = tail.size()
 
-        relation_var, head_var, tail_var = Variable(relation.to(self.device)), Variable(head.to(self.device)), Variable(tail.to(self.device))
+        relation_var, head_var, tail_var = Variable(relation.to(config.device)), Variable(head.to(config.device)), Variable(tail.to(config.device))
 
         logits = self.model.prob_logit(head_var, relation_var, tail_var) / temperature
         probs = nnf.softmax(logits, dim=-1)
@@ -144,7 +143,7 @@ class Component():
         if train:
             self.opt_zero_grad()
             log_probs = nnf.log_softmax(logits, dim=-1)
-            reinforce_loss = -torch.sum(Variable(rewards) * log_probs[row_idx.to(self.device), sample_idx.data])
+            reinforce_loss = -torch.sum(Variable(rewards) * log_probs[row_idx.to(config.device), sample_idx.data])
             reinforce_loss.backward()
             self.opt_step()
         yield None
@@ -158,8 +157,8 @@ class Component():
             raise ValueError("This component is not a discriminator!")
 
         # Forward pass: compute losses and scores
-        head_var, relation_var, tail_var = Variable(head.to(self.device)), Variable(relation.to(self.device)), Variable(tail.to(self.device))        
-        head_fake_var, tail_fake_var = Variable(head_fake.to(self.device)), Variable(tail_fake.to(self.device))
+        head_var, relation_var, tail_var = Variable(head.to(config.device)), Variable(relation.to(config.device)), Variable(tail.to(config.device))        
+        head_fake_var, tail_fake_var = Variable(head_fake.to(config.device)), Variable(tail_fake.to(config.device))
 
         if head_fake_var.dim() == relation_var.dim() + 1:
             relation_fake_var = relation_var.unsqueeze(1).expand_as(head_fake_var)
@@ -189,10 +188,10 @@ class Component():
             for batch_head, batch_relation, batch_tail in batch_by_size(self.model.test_batch_size, *test_data):
                 batch_size = batch_head.size(0)
 
-                all_var = torch.arange(0, self.n_entity).unsqueeze(0).expand(batch_size, self.n_entity).long().to(self.device)
-                head_var = batch_head.unsqueeze(1).expand(batch_size, self.n_entity).to(self.device)
-                relation_var = batch_relation.unsqueeze(1).expand(batch_size, self.n_entity).to(self.device)
-                tail_var = batch_tail.unsqueeze(1).expand(batch_size, self.n_entity).to(self.device)
+                all_var = torch.arange(0, self.n_entity).unsqueeze(0).expand(batch_size, self.n_entity).long().to(config.device)
+                head_var = batch_head.unsqueeze(1).expand(batch_size, self.n_entity).to(config.device)
+                relation_var = batch_relation.unsqueeze(1).expand(batch_size, self.n_entity).to(config.device)
+                tail_var = batch_tail.unsqueeze(1).expand(batch_size, self.n_entity).to(config.device)
 
                 batch_head_scores = self.model.score(all_var, relation_var, tail_var)
                 batch_tail_scores = self.model.score(head_var, relation_var, all_var)
@@ -206,13 +205,13 @@ class Component():
                         key_head = (tail_id, relation_id)
                         if key_head in heads and heads[key_head]._nnz() > 1:
                             tmp = head_scores[head_id].item()
-                            head_scores += heads[key_head].to(self.device) * FILTER_RANKING_PENALTY
+                            head_scores += heads[key_head].to(config.device) * FILTER_RANKING_PENALTY
                             head_scores[head_id] = tmp
                             
                         key_tail = (head_id, relation_id)
                         if key_tail in tails and tails[key_tail]._nnz() > 1:
                             tmp = tail_scores[tail_id].item()
-                            tail_scores += tails[key_tail].to(self.device) * FILTER_RANKING_PENALTY
+                            tail_scores += tails[key_tail].to(config.device) * FILTER_RANKING_PENALTY
                             tail_scores[tail_id] = tmp
 
                     head_metrics = metrics.ranking_metrics(scores=head_scores, target=head_id, k_list=k_list)
@@ -262,9 +261,9 @@ class Component():
             with torch.no_grad():
                 for batch_head, batch_relation, batch_tail in batch_by_size(self.model.test_batch_size,
                                                                            heads, relations, tails):
-                    head_var = torch.LongTensor(batch_head).to(self.device)
-                    relation_var = torch.LongTensor(batch_relation).to(self.device)
-                    tail_var = torch.LongTensor(batch_tail).to(self.device)
+                    head_var = torch.LongTensor(batch_head).to(config.device)
+                    relation_var = torch.LongTensor(batch_relation).to(config.device)
+                    tail_var = torch.LongTensor(batch_tail).to(config.device)
 
                     batch_scores = self.model.score(head_var, relation_var, tail_var)
                     batch_scores = batch_scores.detach().cpu().numpy()
@@ -316,9 +315,9 @@ class Component():
             for batch_head, batch_relation, batch_tail, batch_label in batch_by_size(self.model.test_batch_size,
                                                                                      heads_list, relations_list, tails_list, labels):
                 # ensure tensors on device
-                head_var = torch.LongTensor(batch_head).to(self.device)
-                relation_var = torch.LongTensor(batch_relation).to(self.device)
-                tail_var = torch.LongTensor(batch_tail).to(self.device)
+                head_var = torch.LongTensor(batch_head).to(config.device)
+                relation_var = torch.LongTensor(batch_relation).to(config.device)
+                tail_var = torch.LongTensor(batch_tail).to(config.device)
 
                 batch_scores = self.model.score(head_var, relation_var, tail_var)
                 batch_scores = batch_scores.detach().cpu().tolist()
@@ -370,7 +369,6 @@ class KBGAN():
         self.generator = Component(role="generator", model_type=generator_type,
                                    n_entity=n_entity, n_relation=n_relation)
 
-        self.device = self.discriminator.device
         self.discriminator_path = self.discriminator.model_path
         self.generator_path = self.generator.model_path
 
@@ -438,7 +436,7 @@ class KBGAN():
 
         # log_vars[0] for Ranking, log_vars[1] for Classification
         # Initializing at 0 means initial weight sigma=1
-        log_vars = torch.nn.Parameter(torch.zeros(2, requires_grad=True, device=self.device)) # Ensure device matches model
+        log_vars = torch.nn.Parameter(torch.zeros(2, requires_grad=True, device=config.device)) # Ensure device matches model
         log_vars_opt = OPTIMIZER_MAP[optimizer_name]([log_vars], lr=optimizer_lr)
 
         # Define Classification Loss function
@@ -462,7 +460,7 @@ class KBGAN():
                                                         n_sample=n_sample, temperature=temperature,
                                                         train=True)
                 head_smpl, tail_smpl = next(gen_step)
-                head_smpl_device, tail_smpl_device = head_smpl.to(self.device), tail_smpl.to(self.device)
+                head_smpl_device, tail_smpl_device = head_smpl.to(config.device), tail_smpl.to(config.device)
                 
                 # --- Discriminator Step ---
                 # 1. Get Ranking Loss (and rewards for Generator)
