@@ -171,12 +171,6 @@ class Component():
         pair_loss = nnf.relu(d_good - d_bad + self.model.margin)
         fake_scores = self.model.score(head_fake_var, relation_fake_var, tail_fake_var)
                 
-        # Backward pass: update discriminator
-        if train:
-            self.opt_zero_grad()
-            sum_loss = torch.sum(pair_loss)
-            sum_loss.backward()
-            self.opt_step()
         # In training mode, return differentiable pair_loss so caller can build a joint objective.
         # In evaluation mode, detach to avoid building autograd graph.
         pair_loss_out = pair_loss if train else pair_loss.detach()
