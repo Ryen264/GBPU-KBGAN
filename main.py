@@ -72,7 +72,6 @@ def main():
     heads, tails = sparse_heads_tails(n_entity, train_data, valid_data_no_label, test_data_no_label)
     t_step = log_step("Data load", t_step)
 
-
     # Convert to tensors
     train_data  = [torch.LongTensor(vec) for vec in train_data]
     valid_data_with_labels  = [torch.LongTensor(vec) for vec in valid_data_with_labels]
