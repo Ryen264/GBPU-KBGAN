@@ -96,12 +96,10 @@ def convert_data_to_no_label(data_w_labels: tuple[list[int], list[int], list[int
     labels_arr = np.array(labels)
 
     mask = labels_arr == 1
-
     filtered_heads = [heads[i] for i, m in enumerate(mask) if m]
     filtered_relations = [relations[i] for i, m in enumerate(mask) if m]
     filtered_tails = [tails[i] for i, m in enumerate(mask) if m]
     return filtered_heads, filtered_relations, filtered_tails
-
     
 class BernCorrupter(object):
     def __init__(self, data: tuple[list[int], list[int], list[int]], n_entity: int, n_relation: int):

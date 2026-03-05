@@ -474,47 +474,52 @@ class KBGAN():
                                                                                                   head_fake=head_smpl_device, tail_fake=tail_smpl_device,
                                                                                                   train=True)
 
-                # Update max_d_good and min_d_bad for monitoring
-                update_threshold = False
-                if max_d_good > self.max_d_good:
-                    logging.info(f"Updated max_d_good: {self.max_d_good:.4f} -> {max_d_good:.4f}")
-                    self.max_d_good = max_d_good
-                    update_threshold = True
-                if min_d_bad < self.min_d_bad:
-                    logging.info(f"Updated min_d_bad: {self.min_d_bad:.4f} -> {min_d_bad:.4f}")
-                    self.min_d_bad = min_d_bad
-                    update_threshold = True
-
-                # Calculate optimal threshold for classification based on observed max_d_good and min_d_bad
-                if update_threshold:
-                    self.optimal_threshold = (self.max_d_good + self.min_d_bad) / 2
-                    logging.info(f"Updated optimal_threshold: {self.optimal_threshold:.4f} based on max_d_good and min_d_bad.")                    
-
-                # 2. Get Classification Loss (BCE)
-                # We need raw scores from the discriminator to compute BCE.
-                pos_score = self.discriminator.score(h, r, t)
-                if head_smpl_device.dim() == r.dim() + 1:
-                    relation_for_neg = r.unsqueeze(1).expand_as(head_smpl_device)
-                else:
-                    relation_for_neg = r
-                neg_score = self.discriminator.score(head_smpl_device, relation_for_neg, tail_smpl_device)
-                
-                # Normalize scores to [0, 1] using sigmoid and clamp to avoid numerical issues
-                pos_score_norm = torch.clamp(torch.sigmoid(pos_score), min=EPSILON, max=1.0-EPSILON).float()
-                neg_score_norm = torch.clamp(torch.sigmoid(neg_score), min=EPSILON, max=1.0-EPSILON).float()
-                
-                # Target: 1 for Real, 0 for Fake
-                target_pos = torch.ones_like(pos_score_norm, dtype=torch.float32)
-                target_neg = torch.zeros_like(neg_score_norm, dtype=torch.float32)
-
-                # Calculate classification loss
-                loss_class = bce_criterion(pos_score_norm, target_pos) + bce_criterion(neg_score_norm, target_neg)
-
                 # Calculate ranking loss
                 loss_rank_scalar = torch.mean(loss_rank)
 
-                # Joint objective using only rank_class_balance
-                total_loss = (loss_rank_scalar + class_rank_balance * loss_class) / (1 + class_rank_balance)
+                if class_rank_balance != 0:
+                    # Update max_d_good and min_d_bad for monitoring
+                    update_threshold = False
+                    if max_d_good > self.max_d_good:
+                        logging.info(f"Updated max_d_good: {self.max_d_good:.4f} -> {max_d_good:.4f}")
+                        self.max_d_good = max_d_good
+                        update_threshold = True
+                    if min_d_bad < self.min_d_bad:
+                        logging.info(f"Updated min_d_bad: {self.min_d_bad:.4f} -> {min_d_bad:.4f}")
+                        self.min_d_bad = min_d_bad
+                        update_threshold = True
+
+                    # Calculate optimal threshold for classification based on observed max_d_good and min_d_bad
+                    if update_threshold:
+                        self.optimal_threshold = (self.max_d_good + self.min_d_bad) / 2
+                        logging.info(f"Updated optimal_threshold: {self.optimal_threshold:.4f} based on max_d_good and min_d_bad.")                    
+
+                    # 2. Get Classification Loss (BCE)
+                    # We need raw scores from the discriminator to compute BCE.
+                    pos_score = self.discriminator.score(h, r, t)
+                    if head_smpl_device.dim() == r.dim() + 1:
+                        relation_for_neg = r.unsqueeze(1).expand_as(head_smpl_device)
+                    else:
+                        relation_for_neg = r
+                    neg_score = self.discriminator.score(head_smpl_device, relation_for_neg, tail_smpl_device)
+                    
+                    # Normalize scores to [0, 1] using sigmoid and clamp to avoid numerical issues
+                    pos_score_norm = torch.clamp(torch.sigmoid(pos_score), min=EPSILON, max=1.0-EPSILON).float()
+                    neg_score_norm = torch.clamp(torch.sigmoid(neg_score), min=EPSILON, max=1.0-EPSILON).float()
+                    
+                    # Target: 1 for Real, 0 for Fake
+                    target_pos = torch.ones_like(pos_score_norm, dtype=torch.float32)
+                    target_neg = torch.zeros_like(neg_score_norm, dtype=torch.float32)
+
+                    # Calculate classification loss
+                    loss_class = bce_criterion(pos_score_norm, target_pos) + bce_criterion(neg_score_norm, target_neg)
+
+                    # Joint objective using rank_class_balance
+                    total_loss = (loss_rank_scalar + class_rank_balance * loss_class) / (1 + class_rank_balance)
+                else:
+                    # Only ranking loss (Link Prediction only)
+                    loss_class = torch.tensor(0.0)
+                    total_loss = loss_rank_scalar
 
                 # Optimizer Step
                 self.discriminator.opt_zero_grad()
@@ -551,12 +556,16 @@ class KBGAN():
                 rank_metrics = self.discriminator.evaluate_on_ranking(valid_data_no_label, heads, tails,
                                                                       filt=rank_filt, k_list=rank_k_list)
                 
-                class_threshold = self.optimal_threshold if class_use_maxgood_minbad_threshold else None
-                class_metrics = self.discriminator.evaluate_on_classification(valid_data_w_label,
-                                                                              optimizing_metric=class_optimizing_metric, threshold=class_threshold)
-                
-                test_perf = (class_rank_balance * rank_metrics[rank_optimizing_metric] + class_metrics[class_optimizing_metric]) / (class_rank_balance + 1)
-                logging.info(f'Validation at epoch {epoch + 1}: {rank_optimizing_metric}={rank_metrics[rank_optimizing_metric]}, {class_optimizing_metric}={class_metrics[class_optimizing_metric]}, Perf={test_perf}')
+                if class_rank_balance != 0:
+                    class_threshold = self.optimal_threshold if class_use_maxgood_minbad_threshold else None
+                    class_metrics = self.discriminator.evaluate_on_classification(valid_data_w_label,
+                                                                                  optimizing_metric=class_optimizing_metric, threshold=class_threshold)
+                    
+                    test_perf = (class_rank_balance * rank_metrics[rank_optimizing_metric] + class_metrics[class_optimizing_metric]) / (class_rank_balance + 1)
+                    logging.info(f'Validation at epoch {epoch + 1}: {rank_optimizing_metric}={rank_metrics[rank_optimizing_metric]}, {class_optimizing_metric}={class_metrics[class_optimizing_metric]}, Perf={test_perf}')
+                else:
+                    test_perf = rank_metrics[rank_optimizing_metric]
+                    logging.info(f'Validation at epoch {epoch + 1}: {rank_optimizing_metric}={test_perf}')
                 
                 if test_perf > best_perf:
                     self.save_kbgan()  # Save the best model
