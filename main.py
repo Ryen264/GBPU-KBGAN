@@ -127,14 +127,12 @@ def main():
         # Test KBGAN on link prediction
         link_prediction_metrics = model.evaluate_on_link_prediction(heads, tails, test_data_no_label,
                                                                     filt=RANK_FILT, k_list=RANK_K_LIST)
-        print(f"Link prediction metrics:\n{link_prediction_metrics}")
         t_step = log_step("KBGAN link prediction eval", t_step)
         print("----------------")
 
         # Test KBGAN on triple classification
         triple_classification_metrics = model.evaluate_on_triple_classification(test_data_with_labels,
                                                                                 optimizing_metric=CLASS_OPTIMIZING_METRIC, use_maxgood_minbad_threshold=CLASS_USE_MAXGOOD_MINBAD_THRESHOLD)
-        print(f"Triple classification metrics:\n{triple_classification_metrics}")
         t_step = log_step("KBGAN triple classification eval", t_step)
         print("----------------")
     elif MODE == 'gan-train':
@@ -157,13 +155,11 @@ def main():
         if working_task == 'link-prediction' or working_task == 'all':
             link_prediction_metrics = model.evaluate_on_link_prediction(heads, tails, test_data_no_label,
                                                                         filt=RANK_FILT, k_list=RANK_K_LIST)
-            print(f"Link prediction metrics:\n{link_prediction_metrics}")
             t_step = log_step("KBGAN link prediction eval", t_step)
 
         if working_task == 'triple-classification' or working_task == 'all':
             triple_classification_metrics = model.evaluate_on_triple_classification(test_data_with_labels,
                                                                                     optimizing_metric=CLASS_OPTIMIZING_METRIC, use_maxgood_minbad_threshold=CLASS_USE_MAXGOOD_MINBAD_THRESHOLD)
-            print(f"Triple classification metrics:\n{triple_classification_metrics}") 
             t_step = log_step("KBGAN triple classification eval", t_step)
         print("----------------")
     elif MODE == 'test-only':
@@ -175,12 +171,10 @@ def main():
         if working_task == 'link-prediction' or working_task == 'all':
             link_prediction_metrics = model.evaluate_on_link_prediction(heads, tails, test_data_no_label,
                                                                         filt=RANK_FILT, k_list=RANK_K_LIST)
-            print(f"Link prediction metrics:\n{link_prediction_metrics}")
 
         if working_task == 'triple-classification' or working_task == 'all':
             triple_classification_metrics = model.evaluate_on_triple_classification(test_data_with_labels,
                                                                                     optimizing_metric=CLASS_OPTIMIZING_METRIC, use_maxgood_minbad_threshold=CLASS_USE_MAXGOOD_MINBAD_THRESHOLD)
-            print(f"Triple classification metrics:\n{triple_classification_metrics}")
             t_step = log_step("KBGAN triple classification eval", t_step)
         print("----------------")
     else: 
