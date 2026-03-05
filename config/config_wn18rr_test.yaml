@@ -10,9 +10,9 @@ KBGAN:
   early_stop_patience: -1
   temperature: 1.0
   n_sample: 20
-  n_epoch: 50
+  n_epoch: 10
   n_batch: 10
-  epoch_per_test: 10
+  epoch_per_test: 5
 TransE:
   optimizer: Adagrad
   learning_rate: 0.01

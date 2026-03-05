@@ -7,7 +7,7 @@ from torch.optim import Adam, SGD, AdamW, RMSprop, Adagrad
 from typing import Generator, Tuple
 import numpy as np
 
-from datasets import batch_by_num, batch_by_size, BernCorrupterMulti, BernCorrupter
+from datasets import batch_by_num, batch_by_size, convert_data_to_no_label, BernCorrupterMulti, BernCorrupter
 from models import TransE, TransD, DistMult, ComplEx
 import config
 import metrics
@@ -86,9 +86,9 @@ class Component():
         elif self.model_type in ['DistMult', 'ComplEx']:
             corrupter = BernCorrupterMulti(train_data, self.n_entity, self.n_relation, self.model.n_sample)
         else:
-            raise ValueError(f"Unsupported model type: {self.model_type}")
-
-        valid_data_no_label = valid_data_w_label[:3]
+            raise ValueError(f"Unsupported model type: {self.model_type}")\
+            
+        valid_data_no_label = convert_data_to_no_label(valid_data_w_label)
         rank_metrics = lambda: self.evaluate_on_ranking(valid_data_no_label, heads, tails,
                                                         filt=rank_filt, k_list=rank_k_list)
         
@@ -189,6 +189,10 @@ class Component():
         count = 0
         with torch.no_grad():
             for batch_head, batch_relation, batch_tail in batch_by_size(self.model.test_batch_size, *test_data):
+                # Convert lists to tensors
+                batch_head = torch.LongTensor(batch_head)
+                batch_relation = torch.LongTensor(batch_relation)
+                batch_tail = torch.LongTensor(batch_tail)
                 batch_size = batch_head.size(0)
 
                 all_var = torch.arange(0, self.n_entity).unsqueeze(0).expand(batch_size, self.n_entity).long().to(config.device)

@@ -93,7 +93,7 @@ class TransE(BaseModel):
             for h0, r, t0, h1, t1 in batch_by_num(self.n_batch, head_device, relation_device, tail_device,
                                                   head_corrupted, tail_corrupted, n_sample=n_train):
                 self.model.zero_grad()
-                loss = torch.sum(self.model.pair_loss(Variable(h0), Variable(r), Variable(t0), Variable(h1), Variable(t1)))
+                loss = torch.sum(self.model.pair_loss(h0, r, t0, h1, t1))
                 loss.backward()
                 self.opt.step()
                 self.model.constraint()

@@ -89,6 +89,20 @@ def get_bern_prob(data: tuple[list[int], list[int], list[int]], n_relation: int)
         bern_prob[r] = tph / (tph + htp)
     return bern_prob
 
+def convert_data_to_no_label(data_w_labels: tuple[list[int], list[int], list[int], list[int]]) -> tuple[list[int], list[int], list[int]]:
+    if len(data_w_labels) != 4:
+        raise ValueError("Expected data_w_labels to have 4 components: heads, relations, tails, labels")
+    heads, relations, tails, labels = data_w_labels
+    labels_arr = np.array(labels)
+
+    mask = labels_arr == 1
+
+    filtered_heads = [heads[i] for i, m in enumerate(mask) if m]
+    filtered_relations = [relations[i] for i, m in enumerate(mask) if m]
+    filtered_tails = [tails[i] for i, m in enumerate(mask) if m]
+    return filtered_heads, filtered_relations, filtered_tails
+
+    
 class BernCorrupter(object):
     def __init__(self, data: tuple[list[int], list[int], list[int]], n_entity: int, n_relation: int):
         self.bern_prob = get_bern_prob(data, n_relation)
