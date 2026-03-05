@@ -237,8 +237,10 @@ class Component():
         ranking_metrics['mrr'] = mrr_rate
         for i in range(len(k_list)):
             ranking_metrics[f'hit@{k_list[i]}'] = hits_rate[i]
-
-        ranking_metrics_str = f"Ranking metrics: {ranking_metrics}\n"
+        
+        # Format metrics for cleaner output
+        ranking_metrics_display = {k: f"{v:.4f}" if isinstance(v, float) else v for k, v in ranking_metrics.items()}
+        ranking_metrics_str = f"Ranking metrics: {ranking_metrics_display}\n"
         logging.info(ranking_metrics_str)
         return ranking_metrics
 
