@@ -14,7 +14,7 @@ RANK_OPTIMIZING_METRIC = 'mrr'              # Metric to optimize for ranking eva
 RANK_FILT = True                            # Whether to apply filtering in ranking metrics evaluation
 RANK_K_LIST = [1, 3, 10]                    # Default k values for ranking metrics
 CLASS_OPTIMIZING_METRIC = 'accuracy'        # Metric to optimize for triple classification (e.g., 'accuracy', 'f1', etc.)
-CLASS_USE_MAXGOOD_MINBAD_THRESHOLD = False   # Whether to use dynamic threshold based on max_d_good and min_d_bad for classification
+CLASS_USE_MAXGOOD_MINBAD_THRESHOLD = True   # Whether to use dynamic threshold based on max_d_good and min_d_bad for classification
 
 def main():
     #config_path = './config/config_' + DATASET + '.yaml'
