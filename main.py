@@ -4,7 +4,7 @@ import sys
 import time
 from config import config, overwrite_config_with_args, logger_init, log_step
 from data_loader import index_entity_relation, graph_size, read_data
-from datasets import sparse_heads_tails, inplace_shuffle
+from datasets import convert_data_to_no_label, sparse_heads_tails, inplace_shuffle
 from kbgan import KBGAN
 
 # ./main.py mode=<mode> [other optional args to overwrite config]
@@ -66,21 +66,18 @@ def main():
 
     train_data = read_data(os.path.join(task_dir, 'train.txt'), kb_index)
     inplace_shuffle(*train_data)
-    valid_data = read_data(os.path.join(task_dir, 'valid.txt'), kb_index)
-    test_data = read_data(os.path.join(task_dir, 'test.txt'), kb_index)
-    heads, tails = sparse_heads_tails(n_entity, train_data, valid_data, test_data)
+    valid_data_with_labels = read_data(os.path.join('.', 'data', DATASET + '_w_labels', 'valid.txt'), kb_index, with_label=True)
+    test_data_with_labels  = read_data(os.path.join('.', 'data', DATASET + '_w_labels', 'test.txt'), kb_index, with_label=True)
+    test_data_no_label = convert_data_to_no_label(test_data_with_labels)
+    valid_data_no_label = convert_data_to_no_label(valid_data_with_labels)
+    heads, tails = sparse_heads_tails(n_entity, train_data, valid_data_no_label, test_data_no_label)
     t_step = log_step("Data load", t_step)
 
-    # For task triple-classification, we need to read data with labels
-    if _config.task == 'triple-classification' or _config.task == 'all':
-        valid_data_with_labels = read_data(os.path.join('.', 'data', DATASET + '_w_labels', 'valid.txt'), kb_index, with_label=True)
-        test_data_with_labels  = read_data(os.path.join('.', 'data', DATASET + '_w_labels', 'test.txt'), kb_index, with_label=True)
-        t_step = log_step("Labelled data load", t_step)
 
     # Convert to tensors
     train_data  = [torch.LongTensor(vec) for vec in train_data]
-    valid_data  = [torch.LongTensor(vec) for vec in valid_data]
-    test_data   = [torch.LongTensor(vec) for vec in test_data]
+    valid_data_with_labels  = [torch.LongTensor(vec) for vec in valid_data_with_labels]
+    test_data_with_labels   = [torch.LongTensor(vec) for vec in test_data_with_labels]
     t_step = log_step("Tensor conversion", t_step)
 
     print(f"Running mode: {MODE}")
@@ -89,7 +86,7 @@ def main():
 
     if MODE == 'full-train':
         # Train 2 components
-        dis_best_perf, gen_best_perf = model.train_components(heads, tails, train_data, valid_data, valid_data_with_labels,
+        dis_best_perf, gen_best_perf = model.train_components(heads, tails, train_data, valid_data_with_labels,
                                                             rank_class_balance=rank_class_balance, early_stop_patience=early_stop_patience,
                                                             rank_optimizing_metric=RANK_OPTIMIZING_METRIC, rank_filt=RANK_FILT, rank_k_list=RANK_K_LIST,
                                                             class_optimizing_metric=CLASS_OPTIMIZING_METRIC, class_threshold=None)
@@ -97,11 +94,11 @@ def main():
         print("----------------")
 
         # Test 2 components just be trained on link prediction
-        dis_ranking_metrics = model.discriminator.evaluate_on_ranking(test_data, heads, tails,
+        dis_ranking_metrics = model.discriminator.evaluate_on_ranking(test_data_no_label, heads, tails,
                                                                     filt=RANK_FILT, k_list=RANK_K_LIST)
         print(f"Discriminator metrics on Link Prediction: {dis_ranking_metrics}")
 
-        gen_ranking_metrics = model.generator.evaluate_on_ranking(test_data, heads, tails,
+        gen_ranking_metrics = model.generator.evaluate_on_ranking(test_data_no_label, heads, tails,
                                                                 filt=RANK_FILT, k_list=RANK_K_LIST)
         print(f"Generator metrics on Link Prediction: {gen_ranking_metrics}")
         t_step = log_step("Component link prediction eval", t_step)
