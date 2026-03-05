@@ -98,10 +98,10 @@ class Component():
                                                                 optimizing_metric=class_optimizing_metric, threshold=class_threshold)
         tester = lambda: (class_rank_balance * rank_metrics()[rank_optimizing_metric] + class_metrics()[class_optimizing_metric]) / (class_rank_balance + 1)
 
-        best_perf = self.model.train(train_data,
+        best_perf, best_epoch = self.model.train(train_data,
                                      corrupter, tester, early_stop_patience=early_stop_patience)
         print(f'Trained component successfully: {self.model_type} model.')
-        return best_perf
+        return best_perf, best_epoch
     
     def opt_zero_grad(self) -> None:
         self.model.ensure_optimizer()
@@ -413,17 +413,17 @@ class KBGAN():
         if not isinstance(valid_data_w_label[0], torch.Tensor):
             valid_data_w_label = [torch.LongTensor(vec) for vec in valid_data_w_label]
 
-        best_perf_d = self.discriminator.train(heads, tails, train_data, valid_data_w_label,
+        best_perf_d, best_epoch_d = self.discriminator.train(heads, tails, train_data, valid_data_w_label,
                                                 class_rank_balance=class_rank_balance, early_stop_patience=early_stop_patience,
                                                 rank_optimizing_metric=rank_optimizing_metric, rank_filt=rank_filt, rank_k_list=rank_k_list,
                                                 class_optimizing_metric=class_optimizing_metric, class_threshold=class_threshold)
-        print(f"Trained {self.discriminator_type} discriminator successfully with performance: {best_perf_d}")
+        print(f"Trained {self.discriminator_type} discriminator successfully with performance: {best_perf_d}, epoch: {best_epoch_d}")
 
-        best_perf_g = self.generator.train(heads, tails, train_data, valid_data_w_label,
+        best_perf_g, best_epoch_g = self.generator.train(heads, tails, train_data, valid_data_w_label,
                                             class_rank_balance=class_rank_balance, early_stop_patience=early_stop_patience,
                                             rank_optimizing_metric=rank_optimizing_metric, rank_filt=rank_filt, rank_k_list=rank_k_list,
                                             class_optimizing_metric=class_optimizing_metric, class_threshold=class_threshold)
-        print(f"Trained {self.generator_type} generator successfully with performance: {best_perf_g}")
+        print(f"Trained {self.generator_type} generator successfully with performance: {best_perf_g}, epoch: {best_epoch_g}")
         return best_perf_d, best_perf_g
            
     def train_kbgan(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data_w_label: tuple,
