@@ -81,10 +81,12 @@ class Component():
         config.overwrite_config_with_args(["--log.prefix=" + self.model_type + '_'])
         config.logger_init()
 
+        # Convert to plain lists for BernCorrupter so dict keys use value-based hashing
+        train_data_list = [d.tolist() if isinstance(d, torch.Tensor) else d for d in train_data]
         if self.model_type in ['TransE', 'TransD']:
-            corrupter = BernCorrupter(train_data, self.n_entity, self.n_relation)
+            corrupter = BernCorrupter(train_data_list, self.n_entity, self.n_relation)
         elif self.model_type in ['DistMult', 'ComplEx']:
-            corrupter = BernCorrupterMulti(train_data, self.n_entity, self.n_relation, self.model.n_sample)
+            corrupter = BernCorrupterMulti(train_data_list, self.n_entity, self.n_relation, self.model.n_sample)
         else:
             raise ValueError(f"Unsupported model type: {self.model_type}")\
             
@@ -440,7 +442,9 @@ class KBGAN():
         # Define Classification Loss function
         bce_criterion = torch.nn.BCELoss()
 
-        corrupter = BernCorrupterMulti(train_data, self.n_entity, self.n_relation, n_sample)
+        # Convert to plain lists for BernCorrupterMulti so dict keys use value-based hashing
+        train_data_list = [d.tolist() if isinstance(d, torch.Tensor) else d for d in train_data]
+        corrupter = BernCorrupterMulti(train_data_list, self.n_entity, self.n_relation, n_sample)
         head, relation, tail = train_data
         n_train = len(head)
 
