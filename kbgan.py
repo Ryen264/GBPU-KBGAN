@@ -81,10 +81,12 @@ class Component():
         config.overwrite_config_with_args(["--log.prefix=" + self.model_type + '_'])
         config.logger_init()
 
+        # Convert to plain lists for BernCorrupter so dict keys use value-based hashing
+        train_data_list = [d.tolist() if isinstance(d, torch.Tensor) else d for d in train_data]
         if self.model_type in ['TransE', 'TransD']:
-            corrupter = BernCorrupter(train_data, self.n_entity, self.n_relation)
+            corrupter = BernCorrupter(train_data_list, self.n_entity, self.n_relation)
         elif self.model_type in ['DistMult', 'ComplEx']:
-            corrupter = BernCorrupterMulti(train_data, self.n_entity, self.n_relation, self.model.n_sample)
+            corrupter = BernCorrupterMulti(train_data_list, self.n_entity, self.n_relation, self.model.n_sample)
         else:
             raise ValueError(f"Unsupported model type: {self.model_type}")\
             
@@ -96,10 +98,10 @@ class Component():
                                                                 optimizing_metric=class_optimizing_metric, threshold=class_threshold)
         tester = lambda: (class_rank_balance * rank_metrics()[rank_optimizing_metric] + class_metrics()[class_optimizing_metric]) / (class_rank_balance + 1)
 
-        best_perf = self.model.train(train_data,
+        best_perf, best_epoch = self.model.train(train_data,
                                      corrupter, tester, early_stop_patience=early_stop_patience)
         print(f'Trained component successfully: {self.model_type} model.')
-        return best_perf
+        return best_perf, best_epoch
     
     def opt_zero_grad(self) -> None:
         self.model.ensure_optimizer()
@@ -171,12 +173,6 @@ class Component():
         pair_loss = nnf.relu(d_good - d_bad + self.model.margin)
         fake_scores = self.model.score(head_fake_var, relation_fake_var, tail_fake_var)
                 
-        # Backward pass: update discriminator
-        if train:
-            self.opt_zero_grad()
-            sum_loss = torch.sum(pair_loss)
-            sum_loss.backward()
-            self.opt_step()
         # In training mode, return differentiable pair_loss so caller can build a joint objective.
         # In evaluation mode, detach to avoid building autograd graph.
         pair_loss_out = pair_loss if train else pair_loss.detach()
@@ -241,8 +237,10 @@ class Component():
         ranking_metrics['mrr'] = mrr_rate
         for i in range(len(k_list)):
             ranking_metrics[f'hit@{k_list[i]}'] = hits_rate[i]
-
-        ranking_metrics_str = f"Ranking metrics: {ranking_metrics}\n"
+        
+        # Format metrics for cleaner output
+        ranking_metrics_display = {k: f"{v:.4f}" if isinstance(v, float) else v for k, v in ranking_metrics.items()}
+        ranking_metrics_str = f"Ranking metrics: {ranking_metrics_display}\n"
         logging.info(ranking_metrics_str)
         return ranking_metrics
 
@@ -417,17 +415,17 @@ class KBGAN():
         if not isinstance(valid_data_w_label[0], torch.Tensor):
             valid_data_w_label = [torch.LongTensor(vec) for vec in valid_data_w_label]
 
-        best_perf_d = self.discriminator.train(heads, tails, train_data, valid_data_w_label,
+        best_perf_d, best_epoch_d = self.discriminator.train(heads, tails, train_data, valid_data_w_label,
                                                 class_rank_balance=class_rank_balance, early_stop_patience=early_stop_patience,
                                                 rank_optimizing_metric=rank_optimizing_metric, rank_filt=rank_filt, rank_k_list=rank_k_list,
                                                 class_optimizing_metric=class_optimizing_metric, class_threshold=class_threshold)
-        print(f"Trained {self.discriminator_type} discriminator successfully with performance: {best_perf_d}")
+        print(f"Trained {self.discriminator_type} discriminator successfully with performance: {best_perf_d}, epoch: {best_epoch_d}")
 
-        best_perf_g = self.generator.train(heads, tails, train_data, valid_data_w_label,
+        best_perf_g, best_epoch_g = self.generator.train(heads, tails, train_data, valid_data_w_label,
                                             class_rank_balance=class_rank_balance, early_stop_patience=early_stop_patience,
                                             rank_optimizing_metric=rank_optimizing_metric, rank_filt=rank_filt, rank_k_list=rank_k_list,
                                             class_optimizing_metric=class_optimizing_metric, class_threshold=class_threshold)
-        print(f"Trained {self.generator_type} generator successfully with performance: {best_perf_g}")
+        print(f"Trained {self.generator_type} generator successfully with performance: {best_perf_g}, epoch: {best_epoch_g}")
         return best_perf_d, best_perf_g
            
     def train_kbgan(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data_w_label: tuple,
@@ -446,7 +444,9 @@ class KBGAN():
         # Define Classification Loss function
         bce_criterion = torch.nn.BCELoss()
 
-        corrupter = BernCorrupterMulti(train_data, self.n_entity, self.n_relation, n_sample)
+        # Convert to plain lists for BernCorrupterMulti so dict keys use value-based hashing
+        train_data_list = [d.tolist() if isinstance(d, torch.Tensor) else d for d in train_data]
+        corrupter = BernCorrupterMulti(train_data_list, self.n_entity, self.n_relation, n_sample)
         head, relation, tail = train_data
         n_train = len(head)
 

@@ -8,9 +8,9 @@ KBGAN:
   early_stop_patience: -1
   temperature: 1.0
   n_sample: 20
-  n_epoch: 5000
+  n_epoch: 0
   n_batch: 100
-  epoch_per_test: 100
+  epoch_per_test: 0
 TransE:
   optimizer: Adagrad
   learning_rate: 0.01
@@ -18,9 +18,9 @@ TransE:
   margin: 3
   p: 1
   temp: 1
-  n_epoch: 1000
+  n_epoch: 6000
   n_batch: 100
-  epoch_per_test: 50
+  epoch_per_test: 100
   model_file: TransE.mdl
 TransD:
   optimizer: Adagrad
@@ -29,9 +29,9 @@ TransD:
   margin: 3
   p: 1
   temp: 1
-  n_epoch: 1000
+  n_epoch: 6000
   n_batch: 100
-  epoch_per_test: 50
+  epoch_per_test: 100
   model_file: TransD.mdl
 DistMult:
   optimizer: Adagrad
@@ -41,9 +41,9 @@ DistMult:
   lam: 0.1
   n_sample: 20
   sample_freq: 1
-  n_epoch: 1000
+  n_epoch: 6000
   n_batch: 100
-  epoch_per_test: 50
+  epoch_per_test: 100
   model_file: DistMult.mdl
 ComplEx:
   optimizer: Adagrad
@@ -53,9 +53,9 @@ ComplEx:
   lam: 0.1
   n_sample: 20
   sample_freq: 1
-  n_epoch: 1000
+  n_epoch: 6000
   n_batch: 100
-  epoch_per_test: 50
+  epoch_per_test: 100
   model_file: ComplEx.mdl
 log:
   dump_config: false

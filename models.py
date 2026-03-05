@@ -72,10 +72,11 @@ class TransE(BaseModel):
         self.opt = OPTIMIZER_MAP[self.optimizer_name](self.model.parameters(), lr=self.lr)
 
     def train(self, train_data: Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
-              corrupter, tester, early_stop_patience: int=-1) -> float:
+              corrupter, tester, early_stop_patience: int=-1) -> tuple[float, int]:
         head, relation, tail = train_data
         n_train = len(head)
         best_perf = 0.0
+        best_epoch = -1
         patience_counter = 0
         for epoch in range(self.n_epoch):
             epoch_loss = 0
@@ -104,6 +105,7 @@ class TransE(BaseModel):
                 if (test_perf > best_perf):
                     self.save()
                     best_perf = test_perf
+                    best_epoch = epoch + 1
                     patience_counter = 0
                 else:
                     patience_counter += 1
@@ -111,7 +113,8 @@ class TransE(BaseModel):
                 if (early_stop_patience > 0 and patience_counter >= early_stop_patience):
                     logging.info('Early stopping triggered at epoch %d (patience=%d)', epoch + 1, early_stop_patience)
                     break
-        return best_perf
+        self.load(self.model_path)
+        return best_perf, best_epoch
     
 class TransDModule(BaseModule):
     def __init__(self, n_entity: int, n_relation: int, config: config.config):
@@ -188,10 +191,11 @@ class TransD(BaseModel):
         self.model.to(config.device)
 
     def train(self, train_data: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
-              corrupter, tester, early_stop_patience: int=-1) -> float:
+              corrupter, tester, early_stop_patience: int=-1) -> tuple[float, int]:
         head, relation, tail = train_data
         n_train = len(head)        
         best_perf = 0.0
+        best_epoch = -1
         patience_counter = 0
         for epoch in range(self.n_epoch):
             epoch_loss = 0
@@ -221,6 +225,7 @@ class TransD(BaseModel):
                 if (test_perf > best_perf):
                     self.save()
                     best_perf = test_perf
+                    best_epoch = epoch + 1
                     patience_counter = 0
                 else:
                     patience_counter += 1
@@ -228,7 +233,8 @@ class TransD(BaseModel):
                 if (early_stop_patience > 0 and patience_counter >= early_stop_patience):
                     logging.info('Early stopping triggered at epoch %d', epoch + 1)
                     break
-        return best_perf
+        self.load(self.model_path)
+        return best_perf, best_epoch
     
 class DistMultModule(BaseModule):
     def __init__(self, n_entity: int, n_relation: int, config: config.config):
@@ -281,10 +287,11 @@ class DistMult(BaseModel):
         self.opt = OPTIMIZER_MAP[self.optimizer_name](self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
 
     def train(self, train_data: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
-              corrupter, tester, early_stop_patience: int=-1) -> float:
+              corrupter, tester, early_stop_patience: int=-1) -> tuple[float, int]:
         head, relation, tail = train_data
         n_train = len(head)
         best_perf = 0.0
+        best_epoch = -1
         patience_counter = 0
         for epoch in range(self.n_epoch):
             epoch_loss = 0
@@ -314,6 +321,7 @@ class DistMult(BaseModel):
                 if (test_perf > best_perf):
                     self.save()
                     best_perf = test_perf
+                    best_epoch = epoch + 1
                     patience_counter = 0
                 else:
                     patience_counter += 1
@@ -321,7 +329,8 @@ class DistMult(BaseModel):
                 if (early_stop_patience > 0 and patience_counter >= early_stop_patience):
                     logging.info('Early stopping triggered at epoch %d (patience=%d)', epoch + 1, early_stop_patience)
                     break
-        return best_perf
+        self.load(self.model_path)
+        return best_perf, best_epoch
 
 class ComplExModule(BaseModule):
     def __init__(self, n_entity: int, n_relation: int, config: config.config):
@@ -382,10 +391,11 @@ class ComplEx(BaseModel):
         self.opt = OPTIMIZER_MAP[self.optimizer_name](self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
 
     def train(self, train_data: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
-              corrupter, tester, early_stop_patience: int=-1) -> float:            
+              corrupter, tester, early_stop_patience: int=-1) -> tuple[float, int]:            
         head, relation, tail = train_data
         n_train = len(head)
         best_perf = 0.0
+        best_epoch = -1
         patience_counter = 0
         for epoch in range(self.n_epoch):
             epoch_loss = 0
@@ -414,6 +424,7 @@ class ComplEx(BaseModel):
                 if (test_perf > best_perf):
                     self.save()
                     best_perf = test_perf
+                    best_epoch = epoch + 1
                     patience_counter = 0
                 else:
                     patience_counter += 1
@@ -421,4 +432,5 @@ class ComplEx(BaseModel):
                 if (early_stop_patience > 0 and patience_counter >= early_stop_patience):
                     logging.info('Early stopping triggered at epoch %d', epoch + 1)
                     break
-        return best_perf
+        self.load(self.model_path)
+        return best_perf, best_epoch
