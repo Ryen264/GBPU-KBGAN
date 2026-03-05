@@ -111,6 +111,7 @@ class TransE(BaseModel):
                 if (early_stop_patience > 0 and patience_counter >= early_stop_patience):
                     logging.info('Early stopping triggered at epoch %d (patience=%d)', epoch + 1, early_stop_patience)
                     break
+        self.load(self.model_path)
         return best_perf
     
 class TransDModule(BaseModule):
@@ -228,6 +229,7 @@ class TransD(BaseModel):
                 if (early_stop_patience > 0 and patience_counter >= early_stop_patience):
                     logging.info('Early stopping triggered at epoch %d', epoch + 1)
                     break
+        self.load(self.model_path)
         return best_perf
     
 class DistMultModule(BaseModule):
@@ -321,6 +323,7 @@ class DistMult(BaseModel):
                 if (early_stop_patience > 0 and patience_counter >= early_stop_patience):
                     logging.info('Early stopping triggered at epoch %d (patience=%d)', epoch + 1, early_stop_patience)
                     break
+        self.load(self.model_path)
         return best_perf
 
 class ComplExModule(BaseModule):
@@ -421,4 +424,5 @@ class ComplEx(BaseModel):
                 if (early_stop_patience > 0 and patience_counter >= early_stop_patience):
                     logging.info('Early stopping triggered at epoch %d', epoch + 1)
                     break
+        self.load(self.model_path)
         return best_perf

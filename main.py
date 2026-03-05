@@ -33,9 +33,7 @@ def main():
 
     dis_type, gen_type = _config.d_config, _config.g_config
 
-    optimizer_name = _config['KBGAN']['optimizer']
-    optimizer_lr = _config['KBGAN']['learning_rate']
-    rank_class_balance = _config['KBGAN']['rank_class_balance']
+    class_rank_balance = _config['KBGAN']['class_rank_balance']
     early_stop_patience = _config['KBGAN']['early_stop_patience']
     temperature = _config['KBGAN']['temperature']
     n_sample = _config['KBGAN']['n_sample']
@@ -68,11 +66,11 @@ def main():
     inplace_shuffle(*train_data)
     valid_data_with_labels = read_data(os.path.join('.', 'data', DATASET + '_w_labels', 'valid.txt'), kb_index, with_label=True)
     test_data_with_labels  = read_data(os.path.join('.', 'data', DATASET + '_w_labels', 'test.txt'), kb_index, with_label=True)
+
     test_data_no_label = convert_data_to_no_label(test_data_with_labels)
     valid_data_no_label = convert_data_to_no_label(valid_data_with_labels)
     heads, tails = sparse_heads_tails(n_entity, train_data, valid_data_no_label, test_data_no_label)
     t_step = log_step("Data load", t_step)
-
 
     # Convert to tensors
     train_data  = [torch.LongTensor(vec) for vec in train_data]
@@ -87,7 +85,7 @@ def main():
     if MODE == 'full-train':
         # Train 2 components
         dis_best_perf, gen_best_perf = model.train_components(heads, tails, train_data, valid_data_with_labels,
-                                                            rank_class_balance=rank_class_balance, early_stop_patience=early_stop_patience,
+                                                            class_rank_balance=class_rank_balance, early_stop_patience=early_stop_patience,
                                                             rank_optimizing_metric=RANK_OPTIMIZING_METRIC, rank_filt=RANK_FILT, rank_k_list=RANK_K_LIST,
                                                             class_optimizing_metric=CLASS_OPTIMIZING_METRIC, class_threshold=None)
         t_step = log_step("Pretrain components", t_step)
@@ -117,8 +115,7 @@ def main():
 
         # Train KBGAN
         best_perf = model.train_kbgan(heads, tails, train_data, valid_data_with_labels,
-                                    optimizer_name=optimizer_name, optimizer_lr=optimizer_lr,
-                                    rank_class_balance=rank_class_balance, early_stop_patience=early_stop_patience,
+                                    class_rank_balance=class_rank_balance, early_stop_patience=early_stop_patience,
                                     temperature=temperature, n_sample=n_sample, n_epoch=n_epoch, n_batch=n_batch, epoch_per_test=epoch_per_test,
                                     rank_optimizing_metric=RANK_OPTIMIZING_METRIC, rank_filt=RANK_FILT, rank_k_list=RANK_K_LIST,
                                     class_optimizing_metric=CLASS_OPTIMIZING_METRIC, class_use_maxgood_minbad_threshold=CLASS_USE_MAXGOOD_MINBAD_THRESHOLD)
@@ -148,8 +145,7 @@ def main():
 
         # Train KBGAN
         best_perf = model.train_kbgan(heads, tails, train_data, valid_data_with_labels,
-                                    optimizer_name=optimizer_name, optimizer_lr=optimizer_lr,
-                                    rank_class_balance=rank_class_balance, early_stop_patience=early_stop_patience,
+                                    class_rank_balance=class_rank_balance, early_stop_patience=early_stop_patience,
                                     temperature=temperature, n_sample=n_sample, n_epoch=n_epoch, n_batch=n_batch, epoch_per_test=epoch_per_test,
                                     rank_optimizing_metric=RANK_OPTIMIZING_METRIC, rank_filt=RANK_FILT, rank_k_list=RANK_K_LIST,
                                     class_optimizing_metric=CLASS_OPTIMIZING_METRIC, class_use_maxgood_minbad_threshold=CLASS_USE_MAXGOOD_MINBAD_THRESHOLD)        
@@ -159,7 +155,7 @@ def main():
 
         # Test KBGAN on task
         if working_task == 'link-prediction' or working_task == 'all':
-            link_prediction_metrics = model.evaluate_on_link_prediction(heads, tails, test_data,
+            link_prediction_metrics = model.evaluate_on_link_prediction(heads, tails, test_data_no_label,
                                                                         filt=RANK_FILT, k_list=RANK_K_LIST)
             print(f"Link prediction metrics:\n{link_prediction_metrics}")
             t_step = log_step("KBGAN link prediction eval", t_step)
@@ -177,7 +173,7 @@ def main():
 
         # Test KBGAN on task
         if working_task == 'link-prediction' or working_task == 'all':
-            link_prediction_metrics = model.evaluate_on_link_prediction(heads, tails, test_data,
+            link_prediction_metrics = model.evaluate_on_link_prediction(heads, tails, test_data_no_label,
                                                                         filt=RANK_FILT, k_list=RANK_K_LIST)
             print(f"Link prediction metrics:\n{link_prediction_metrics}")
 

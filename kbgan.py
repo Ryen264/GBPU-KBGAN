@@ -75,16 +75,18 @@ class Component():
         return self.model.score(head_var, relation_var, tail_var)
 
     def train(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data_w_label: tuple,
-              rank_class_balance: float = 1.0, early_stop_patience: int=-1,
+              class_rank_balance: float = 1.0, early_stop_patience: int=-1,
               rank_optimizing_metric: str='mrr', rank_filt: bool=True, rank_k_list: list=[1, 3, 10],
               class_optimizing_metric: str='accuracy', class_threshold: float=None) -> float:    
         config.overwrite_config_with_args(["--log.prefix=" + self.model_type + '_'])
         config.logger_init()
 
+        # Convert to plain lists for BernCorrupter so dict keys use value-based hashing
+        train_data_list = [d.tolist() if isinstance(d, torch.Tensor) else d for d in train_data]
         if self.model_type in ['TransE', 'TransD']:
-            corrupter = BernCorrupter(train_data, self.n_entity, self.n_relation)
+            corrupter = BernCorrupter(train_data_list, self.n_entity, self.n_relation)
         elif self.model_type in ['DistMult', 'ComplEx']:
-            corrupter = BernCorrupterMulti(train_data, self.n_entity, self.n_relation, self.model.n_sample)
+            corrupter = BernCorrupterMulti(train_data_list, self.n_entity, self.n_relation, self.model.n_sample)
         else:
             raise ValueError(f"Unsupported model type: {self.model_type}")\
             
@@ -94,7 +96,7 @@ class Component():
         
         class_metrics = lambda: self.evaluate_on_classification(valid_data_w_label,
                                                                 optimizing_metric=class_optimizing_metric, threshold=class_threshold)
-        tester = lambda: (rank_class_balance * rank_metrics()[rank_optimizing_metric] + class_metrics()[class_optimizing_metric]) / (rank_class_balance + 1)
+        tester = lambda: (class_rank_balance * rank_metrics()[rank_optimizing_metric] + class_metrics()[class_optimizing_metric]) / (class_rank_balance + 1)
 
         best_perf = self.model.train(train_data,
                                      corrupter, tester, early_stop_patience=early_stop_patience)
@@ -171,13 +173,10 @@ class Component():
         pair_loss = nnf.relu(d_good - d_bad + self.model.margin)
         fake_scores = self.model.score(head_fake_var, relation_fake_var, tail_fake_var)
                 
-        # Backward pass: update discriminator
-        if train:
-            self.opt_zero_grad()
-            sum_loss = torch.sum(pair_loss)
-            sum_loss.backward()
-            self.opt_step()
-        return pair_loss.detach(), -fake_scores.detach(), d_good.detach().max().item(), d_bad.detach().min().item()
+        # In training mode, return differentiable pair_loss so caller can build a joint objective.
+        # In evaluation mode, detach to avoid building autograd graph.
+        pair_loss_out = pair_loss if train else pair_loss.detach()
+        return pair_loss_out, -fake_scores.detach(), d_good.detach().max().item(), d_bad.detach().min().item()
 
     def evaluate_on_ranking(self, test_data: tuple, heads: torch.Tensor, tails: torch.Tensor,
                             filt: bool=True, k_list: list=[1, 3, 10]) -> dict:
@@ -406,7 +405,7 @@ class KBGAN():
         print(f"Saved KBGAN (discriminator) successfully to: {filepath}")
         
     def train_components(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data_w_label: tuple,
-                        rank_class_balance: float=5.0, early_stop_patience: int=-1,
+                        class_rank_balance: float=5.0, early_stop_patience: int=-1,
                         rank_optimizing_metric: str='mrr', rank_filt: bool=True, rank_k_list: list=[1, 3, 10],
                         class_optimizing_metric: str='accuracy', class_threshold: float=None) -> Tuple[float, float]:
         if not isinstance(train_data[0], torch.Tensor):
@@ -415,38 +414,37 @@ class KBGAN():
             valid_data_w_label = [torch.LongTensor(vec) for vec in valid_data_w_label]
 
         best_perf_d = self.discriminator.train(heads, tails, train_data, valid_data_w_label,
-                                                rank_class_balance=rank_class_balance, early_stop_patience=early_stop_patience,
+                                                class_rank_balance=class_rank_balance, early_stop_patience=early_stop_patience,
                                                 rank_optimizing_metric=rank_optimizing_metric, rank_filt=rank_filt, rank_k_list=rank_k_list,
                                                 class_optimizing_metric=class_optimizing_metric, class_threshold=class_threshold)
         print(f"Trained {self.discriminator_type} discriminator successfully with performance: {best_perf_d}")
 
         best_perf_g = self.generator.train(heads, tails, train_data, valid_data_w_label,
-                                            rank_class_balance=rank_class_balance, early_stop_patience=early_stop_patience,
+                                            class_rank_balance=class_rank_balance, early_stop_patience=early_stop_patience,
                                             rank_optimizing_metric=rank_optimizing_metric, rank_filt=rank_filt, rank_k_list=rank_k_list,
                                             class_optimizing_metric=class_optimizing_metric, class_threshold=class_threshold)
         print(f"Trained {self.generator_type} generator successfully with performance: {best_perf_g}")
         return best_perf_d, best_perf_g
            
     def train_kbgan(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data_w_label: tuple,
-                optimizer_name: str='Adagrad', optimizer_lr: float=0.01,
-                rank_class_balance: float=1.0, early_stop_patience: int=-1,
+                class_rank_balance: float=1.0, early_stop_patience: int=-1,
                 temperature: float=1.0, n_sample: int=20, n_epoch: int=5000, n_batch: int=100, epoch_per_test: int=100,
                 rank_optimizing_metric: str='mrr', rank_filt: bool=True, rank_k_list: list=[1, 3, 10],
                 class_optimizing_metric: str='accuracy', class_use_maxgood_minbad_threshold: bool=True) -> float:
+        """
+        If class_rank_balance == 0, only optimize ranking loss (only for Link Prediction).
+        """
         if not isinstance(train_data[0], torch.Tensor):
             train_data = [torch.LongTensor(vec) for vec in train_data]
         if not isinstance(valid_data_w_label[0], torch.Tensor):
             valid_data_w_label = [torch.LongTensor(vec) for vec in valid_data_w_label]
 
-        # log_vars[0] for Ranking, log_vars[1] for Classification
-        # Initializing at 0 means initial weight sigma=1
-        log_vars = torch.nn.Parameter(torch.zeros(2, requires_grad=True, device=config.device)) # Ensure device matches model
-        log_vars_opt = OPTIMIZER_MAP[optimizer_name]([log_vars], lr=optimizer_lr)
-
         # Define Classification Loss function
         bce_criterion = torch.nn.BCELoss()
 
-        corrupter = BernCorrupterMulti(train_data, self.n_entity, self.n_relation, n_sample)
+        # Convert to plain lists for BernCorrupterMulti so dict keys use value-based hashing
+        train_data_list = [d.tolist() if isinstance(d, torch.Tensor) else d for d in train_data]
+        corrupter = BernCorrupterMulti(train_data_list, self.n_entity, self.n_relation, n_sample)
         head, relation, tail = train_data
         n_train = len(head)
 
@@ -455,6 +453,8 @@ class KBGAN():
         patience_counter = 0
         for epoch in range(n_epoch):
             epoch_d_loss = 0
+            epoch_rank_loss = 0
+            epoch_class_loss = 0
             epoch_reward = 0
 
             head_cand, relation_cand, tail_cand = corrupter.corrupt(head, relation, tail, keep_truth=False)
@@ -472,67 +472,65 @@ class KBGAN():
                                                                                                   head_fake=head_smpl_device, tail_fake=tail_smpl_device,
                                                                                                   train=True)
 
-                # Update max_d_good and min_d_bad for monitoring
-                update_threshold = False
-                if max_d_good > self.max_d_good:
-                    logging.info(f"Updated max_d_good: {self.max_d_good:.4f} -> {max_d_good:.4f}")
-                    self.max_d_good = max_d_good
-                    update_threshold = True
-                if min_d_bad < self.min_d_bad:
-                    logging.info(f"Updated min_d_bad: {self.min_d_bad:.4f} -> {min_d_bad:.4f}")
-                    self.min_d_bad = min_d_bad
-                    update_threshold = True
-
-                # Calculate optimal threshold for classification based on observed max_d_good and min_d_bad
-                if update_threshold:
-                    self.optimal_threshold = (self.max_d_good + self.min_d_bad) / 2
-                    logging.info(f"Updated optimal_threshold: {self.optimal_threshold:.4f} based on max_d_good and min_d_bad.")                    
-
-                # 2. Get Classification Loss (BCE)
-                # We need raw scores from the discriminator to compute BCE.
-                pos_score = self.discriminator.score(h, r, t)
-                if head_smpl_device.dim() == r.dim() + 1:
-                    relation_for_neg = r.unsqueeze(1).expand_as(head_smpl_device)
-                else:
-                    relation_for_neg = r
-                neg_score = self.discriminator.score(head_smpl_device, relation_for_neg, tail_smpl_device)
-                
-                # Normalize scores to [0, 1] using sigmoid and clamp to avoid numerical issues
-                pos_score_norm = torch.clamp(torch.sigmoid(pos_score), min=EPSILON, max=1.0-EPSILON).float()
-                neg_score_norm = torch.clamp(torch.sigmoid(neg_score), min=EPSILON, max=1.0-EPSILON).float()
-                
-                # Target: 1 for Real, 0 for Fake
-                target_pos = torch.ones_like(pos_score_norm, dtype=torch.float32)
-                target_neg = torch.zeros_like(neg_score_norm, dtype=torch.float32)
-
-                # FORMULA: L_total = exp(-s1)*L1 + s1 + exp(-s2)*L2 + s2
-                # L1 = Ranking Loss, L2 = Classification Loss, s1 and s2 are log_vars for dynamic weighting
-
-                # Calculate classification loss
-                loss_class = bce_criterion(pos_score_norm, target_pos) + bce_criterion(neg_score_norm, target_neg)
-                precision_class = torch.exp(-log_vars[1])
-                loss_class_weighted = precision_class * loss_class + log_vars[1]
-
                 # Calculate ranking loss
                 loss_rank_scalar = torch.mean(loss_rank)
-                precision_rank = torch.exp(-log_vars[0])
-                loss_rank_weighted = precision_rank * loss_rank_scalar + log_vars[0]
-                
-                # Calculate total loss with balance factor
-                total_loss = (rank_class_balance * loss_rank_weighted + loss_class_weighted) / (rank_class_balance + 1)
+
+                if class_rank_balance != 0:
+                    # Update max_d_good and min_d_bad for monitoring
+                    update_threshold = False
+                    if max_d_good > self.max_d_good:
+                        logging.info(f"Updated max_d_good: {self.max_d_good:.4f} -> {max_d_good:.4f}")
+                        self.max_d_good = max_d_good
+                        update_threshold = True
+                    if min_d_bad < self.min_d_bad:
+                        logging.info(f"Updated min_d_bad: {self.min_d_bad:.4f} -> {min_d_bad:.4f}")
+                        self.min_d_bad = min_d_bad
+                        update_threshold = True
+
+                    # Calculate optimal threshold for classification based on observed max_d_good and min_d_bad
+                    if update_threshold:
+                        self.optimal_threshold = (self.max_d_good + self.min_d_bad) / 2
+                        logging.info(f"Updated optimal_threshold: {self.optimal_threshold:.4f} based on max_d_good and min_d_bad.")                    
+
+                    # 2. Get Classification Loss (BCE)
+                    # We need raw scores from the discriminator to compute BCE.
+                    pos_score = self.discriminator.score(h, r, t)
+                    if head_smpl_device.dim() == r.dim() + 1:
+                        relation_for_neg = r.unsqueeze(1).expand_as(head_smpl_device)
+                    else:
+                        relation_for_neg = r
+                    neg_score = self.discriminator.score(head_smpl_device, relation_for_neg, tail_smpl_device)
+                    
+                    # Normalize scores to [0, 1] using sigmoid and clamp to avoid numerical issues
+                    pos_score_norm = torch.clamp(torch.sigmoid(pos_score), min=EPSILON, max=1.0-EPSILON).float()
+                    neg_score_norm = torch.clamp(torch.sigmoid(neg_score), min=EPSILON, max=1.0-EPSILON).float()
+                    
+                    # Target: 1 for Real, 0 for Fake
+                    target_pos = torch.ones_like(pos_score_norm, dtype=torch.float32)
+                    target_neg = torch.zeros_like(neg_score_norm, dtype=torch.float32)
+
+                    # Calculate classification loss
+                    loss_class = bce_criterion(pos_score_norm, target_pos) + bce_criterion(neg_score_norm, target_neg)
+
+                    # Joint objective using class_rank_balance
+                    total_loss = (loss_rank_scalar + class_rank_balance * loss_class) / (1 + class_rank_balance)
+                else:
+                    # Only ranking loss (Link Prediction only)
+                    loss_class = torch.tensor(0.0)
+                    total_loss = loss_rank_scalar
 
                 # Optimizer Step
                 self.discriminator.opt_zero_grad()
-                log_vars_opt.zero_grad()
                 total_loss.backward()
 
                 # Apply entity embedding constraints (e.g. norm <= 1)
                 self.discriminator.opt_step()
-                log_vars_opt.step()
 
                 # Update Metrics
                 epoch_reward += torch.sum(rewards)
                 epoch_d_loss += total_loss.item() # Logging the combined loss
+                epoch_rank_loss += loss_rank_scalar.item()
+                epoch_class_loss += loss_class.item()
 
                 # Update Generator
                 rewards = rewards - avg_reward
@@ -545,25 +543,27 @@ class KBGAN():
                     pass
                 
             avg_loss = epoch_d_loss / n_train
+            avg_rank_loss = epoch_rank_loss / n_train
+            avg_class_loss = epoch_class_loss / n_train
             avg_reward = epoch_reward / n_train
 
-            rank_weight = torch.exp(-log_vars[0]).item()
-            class_weight = torch.exp(-log_vars[1]).item()
-            logging.info('Epoch %d/%d, Joint_Loss=%f, Rank_logVar=%f, Class_logVar=%f, Rank_W=%f, Class_W=%f', 
-                        epoch + 1, n_epoch, avg_loss, log_vars[0].item(), log_vars[1].item(), rank_weight, class_weight)
+            logging.info(f'Epoch {epoch + 1}/{n_epoch}, Joint_Loss={avg_loss}, Rank_Loss={avg_rank_loss}, Class_Loss={avg_class_loss}')
 
             if (epoch + 1) % epoch_per_test == 0:
                 valid_data_no_label = valid_data_w_label[:3]
                 rank_metrics = self.discriminator.evaluate_on_ranking(valid_data_no_label, heads, tails,
                                                                       filt=rank_filt, k_list=rank_k_list)
                 
-                class_threshold = self.optimal_threshold if class_use_maxgood_minbad_threshold else None
-                class_metrics = self.discriminator.evaluate_on_classification(valid_data_w_label,
-                                                                              optimizing_metric=class_optimizing_metric, threshold=class_threshold)
-                
-                test_perf = (rank_class_balance * rank_metrics[rank_optimizing_metric] + class_metrics[class_optimizing_metric]) / (rank_class_balance + 1)
-                logging.info('Validation at epoch %d: %s=%f, %s=%f, Perf=%f', 
-                            epoch + 1, rank_optimizing_metric, rank_metrics[rank_optimizing_metric], class_optimizing_metric, class_metrics[class_optimizing_metric], test_perf)
+                if class_rank_balance != 0:
+                    class_threshold = self.optimal_threshold if class_use_maxgood_minbad_threshold else None
+                    class_metrics = self.discriminator.evaluate_on_classification(valid_data_w_label,
+                                                                                  optimizing_metric=class_optimizing_metric, threshold=class_threshold)
+                    
+                    test_perf = (class_rank_balance * rank_metrics[rank_optimizing_metric] + class_metrics[class_optimizing_metric]) / (class_rank_balance + 1)
+                    logging.info(f'Validation at epoch {epoch + 1}: {rank_optimizing_metric}={rank_metrics[rank_optimizing_metric]}, {class_optimizing_metric}={class_metrics[class_optimizing_metric]}, Perf={test_perf}')
+                else:
+                    test_perf = rank_metrics[rank_optimizing_metric]
+                    logging.info(f'Validation at epoch {epoch + 1}: {rank_optimizing_metric}={test_perf}')
                 
                 if test_perf > best_perf:
                     self.save_kbgan()  # Save the best model
@@ -574,7 +574,7 @@ class KBGAN():
                     patience_counter += 1
                     
                 if early_stop_patience > 0 and patience_counter >= early_stop_patience:
-                    logging.info('Early stopping triggered at epoch %d (patience=%d)', epoch + 1, early_stop_patience)
+                    logging.info(f'Early stopping triggered at epoch {epoch + 1} (patience={early_stop_patience})')
                     break
         print(f'Trained KBGAN successfully: {self.generator_type} generator, {self.discriminator_type} discriminator.')
         return best_perf
