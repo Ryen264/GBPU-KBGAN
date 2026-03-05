@@ -18,7 +18,7 @@ CLASS_USE_MAXGOOD_MINBAD_THRESHOLD = True   # Whether to use dynamic threshold b
 
 def main():
     #config_path = './config/config_' + DATASET + '.yaml'
-    config_path = './config/config_' + DATASET + '_test.yaml' # Use the test config with smaller epochs for quick testing
+    config_path = './config/config_' + DATASET + '_baseline.yaml' # Use the test config with smaller epochs for quick testing
 
     _config = config(config_path)
     working_task = _config.task # link-prediction / triple-classification / all (all for 'full-train' mode)
@@ -128,7 +128,7 @@ def main():
         print("----------------")
         
         # Test KBGAN on link prediction
-        link_prediction_metrics = model.evaluate_on_link_prediction(heads, tails, test_data,
+        link_prediction_metrics = model.evaluate_on_link_prediction(heads, tails, test_data_no_label,
                                                                     filt=RANK_FILT, k_list=RANK_K_LIST)
         print(f"Link prediction metrics:\n{link_prediction_metrics}")
         t_step = log_step("KBGAN link prediction eval", t_step)
