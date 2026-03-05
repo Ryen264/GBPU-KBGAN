@@ -75,7 +75,7 @@ class Component():
         return self.model.score(head_var, relation_var, tail_var)
 
     def train(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data_w_label: tuple,
-              rank_class_balance: float = 1.0, early_stop_patience: int=-1,
+              class_rank_balance: float = 1.0, early_stop_patience: int=-1,
               rank_optimizing_metric: str='mrr', rank_filt: bool=True, rank_k_list: list=[1, 3, 10],
               class_optimizing_metric: str='accuracy', class_threshold: float=None) -> float:    
         config.overwrite_config_with_args(["--log.prefix=" + self.model_type + '_'])
@@ -94,7 +94,7 @@ class Component():
         
         class_metrics = lambda: self.evaluate_on_classification(valid_data_w_label,
                                                                 optimizing_metric=class_optimizing_metric, threshold=class_threshold)
-        tester = lambda: (rank_class_balance * rank_metrics()[rank_optimizing_metric] + class_metrics()[class_optimizing_metric]) / (rank_class_balance + 1)
+        tester = lambda: (class_rank_balance * rank_metrics()[rank_optimizing_metric] + class_metrics()[class_optimizing_metric]) / (class_rank_balance + 1)
 
         best_perf = self.model.train(train_data,
                                      corrupter, tester, early_stop_patience=early_stop_patience)
@@ -409,7 +409,7 @@ class KBGAN():
         print(f"Saved KBGAN (discriminator) successfully to: {filepath}")
         
     def train_components(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data_w_label: tuple,
-                        rank_class_balance: float=5.0, early_stop_patience: int=-1,
+                        class_rank_balance: float=5.0, early_stop_patience: int=-1,
                         rank_optimizing_metric: str='mrr', rank_filt: bool=True, rank_k_list: list=[1, 3, 10],
                         class_optimizing_metric: str='accuracy', class_threshold: float=None) -> Tuple[float, float]:
         if not isinstance(train_data[0], torch.Tensor):
@@ -418,13 +418,13 @@ class KBGAN():
             valid_data_w_label = [torch.LongTensor(vec) for vec in valid_data_w_label]
 
         best_perf_d = self.discriminator.train(heads, tails, train_data, valid_data_w_label,
-                                                rank_class_balance=rank_class_balance, early_stop_patience=early_stop_patience,
+                                                class_rank_balance=class_rank_balance, early_stop_patience=early_stop_patience,
                                                 rank_optimizing_metric=rank_optimizing_metric, rank_filt=rank_filt, rank_k_list=rank_k_list,
                                                 class_optimizing_metric=class_optimizing_metric, class_threshold=class_threshold)
         print(f"Trained {self.discriminator_type} discriminator successfully with performance: {best_perf_d}")
 
         best_perf_g = self.generator.train(heads, tails, train_data, valid_data_w_label,
-                                            rank_class_balance=rank_class_balance, early_stop_patience=early_stop_patience,
+                                            class_rank_balance=class_rank_balance, early_stop_patience=early_stop_patience,
                                             rank_optimizing_metric=rank_optimizing_metric, rank_filt=rank_filt, rank_k_list=rank_k_list,
                                             class_optimizing_metric=class_optimizing_metric, class_threshold=class_threshold)
         print(f"Trained {self.generator_type} generator successfully with performance: {best_perf_g}")
@@ -514,7 +514,7 @@ class KBGAN():
                     # Calculate classification loss
                     loss_class = bce_criterion(pos_score_norm, target_pos) + bce_criterion(neg_score_norm, target_neg)
 
-                    # Joint objective using rank_class_balance
+                    # Joint objective using class_rank_balance
                     total_loss = (loss_rank_scalar + class_rank_balance * loss_class) / (1 + class_rank_balance)
                 else:
                     # Only ranking loss (Link Prediction only)
