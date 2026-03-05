@@ -177,7 +177,10 @@ class Component():
             sum_loss = torch.sum(pair_loss)
             sum_loss.backward()
             self.opt_step()
-        return pair_loss.detach(), -fake_scores.detach(), d_good.detach().max().item(), d_bad.detach().min().item()
+        # In training mode, return differentiable pair_loss so caller can build a joint objective.
+        # In evaluation mode, detach to avoid building autograd graph.
+        pair_loss_out = pair_loss if train else pair_loss.detach()
+        return pair_loss_out, -fake_scores.detach(), d_good.detach().max().item(), d_bad.detach().min().item()
 
     def evaluate_on_ranking(self, test_data: tuple, heads: torch.Tensor, tails: torch.Tensor,
                             filt: bool=True, k_list: list=[1, 3, 10]) -> dict:
@@ -424,20 +427,17 @@ class KBGAN():
         return best_perf_d, best_perf_g
            
     def train_kbgan(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data_w_label: tuple,
-                optimizer_name: str='Adagrad', optimizer_lr: float=0.01,
-                rank_class_balance: float=1.0, early_stop_patience: int=-1,
+                class_rank_balance: float=1.0, early_stop_patience: int=-1,
                 temperature: float=1.0, n_sample: int=20, n_epoch: int=5000, n_batch: int=100, epoch_per_test: int=100,
                 rank_optimizing_metric: str='mrr', rank_filt: bool=True, rank_k_list: list=[1, 3, 10],
                 class_optimizing_metric: str='accuracy', class_use_maxgood_minbad_threshold: bool=True) -> float:
+        """
+        If class_rank_balance == 0, only optimize ranking loss (only for Link Prediction).
+        """
         if not isinstance(train_data[0], torch.Tensor):
             train_data = [torch.LongTensor(vec) for vec in train_data]
         if not isinstance(valid_data_w_label[0], torch.Tensor):
             valid_data_w_label = [torch.LongTensor(vec) for vec in valid_data_w_label]
-
-        # log_vars[0] for Ranking, log_vars[1] for Classification
-        # Initializing at 0 means initial weight sigma=1
-        log_vars = torch.nn.Parameter(torch.zeros(2, requires_grad=True, device=config.device)) # Ensure device matches model
-        log_vars_opt = OPTIMIZER_MAP[optimizer_name]([log_vars], lr=optimizer_lr)
 
         # Define Classification Loss function
         bce_criterion = torch.nn.BCELoss()
@@ -451,6 +451,8 @@ class KBGAN():
         patience_counter = 0
         for epoch in range(n_epoch):
             epoch_d_loss = 0
+            epoch_rank_loss = 0
+            epoch_class_loss = 0
             epoch_reward = 0
 
             head_cand, relation_cand, tail_cand = corrupter.corrupt(head, relation, tail, keep_truth=False)
@@ -501,34 +503,27 @@ class KBGAN():
                 target_pos = torch.ones_like(pos_score_norm, dtype=torch.float32)
                 target_neg = torch.zeros_like(neg_score_norm, dtype=torch.float32)
 
-                # FORMULA: L_total = exp(-s1)*L1 + s1 + exp(-s2)*L2 + s2
-                # L1 = Ranking Loss, L2 = Classification Loss, s1 and s2 are log_vars for dynamic weighting
-
                 # Calculate classification loss
                 loss_class = bce_criterion(pos_score_norm, target_pos) + bce_criterion(neg_score_norm, target_neg)
-                precision_class = torch.exp(-log_vars[1])
-                loss_class_weighted = precision_class * loss_class + log_vars[1]
 
                 # Calculate ranking loss
                 loss_rank_scalar = torch.mean(loss_rank)
-                precision_rank = torch.exp(-log_vars[0])
-                loss_rank_weighted = precision_rank * loss_rank_scalar + log_vars[0]
-                
-                # Calculate total loss with balance factor
-                total_loss = (rank_class_balance * loss_rank_weighted + loss_class_weighted) / (rank_class_balance + 1)
+
+                # Joint objective using only rank_class_balance
+                total_loss = (loss_rank_scalar + class_rank_balance * loss_class) / (1 + class_rank_balance)
 
                 # Optimizer Step
                 self.discriminator.opt_zero_grad()
-                log_vars_opt.zero_grad()
                 total_loss.backward()
 
                 # Apply entity embedding constraints (e.g. norm <= 1)
                 self.discriminator.opt_step()
-                log_vars_opt.step()
 
                 # Update Metrics
                 epoch_reward += torch.sum(rewards)
                 epoch_d_loss += total_loss.item() # Logging the combined loss
+                epoch_rank_loss += loss_rank_scalar.item()
+                epoch_class_loss += loss_class.item()
 
                 # Update Generator
                 rewards = rewards - avg_reward
@@ -541,12 +536,11 @@ class KBGAN():
                     pass
                 
             avg_loss = epoch_d_loss / n_train
+            avg_rank_loss = epoch_rank_loss / n_train
+            avg_class_loss = epoch_class_loss / n_train
             avg_reward = epoch_reward / n_train
 
-            rank_weight = torch.exp(-log_vars[0]).item()
-            class_weight = torch.exp(-log_vars[1]).item()
-            logging.info('Epoch %d/%d, Joint_Loss=%f, Rank_logVar=%f, Class_logVar=%f, Rank_W=%f, Class_W=%f', 
-                        epoch + 1, n_epoch, avg_loss, log_vars[0].item(), log_vars[1].item(), rank_weight, class_weight)
+            logging.info(f'Epoch {epoch + 1}/{n_epoch}, Joint_Loss={avg_loss}, Rank_Loss={avg_rank_loss}, Class_Loss={avg_class_loss}')
 
             if (epoch + 1) % epoch_per_test == 0:
                 valid_data_no_label = valid_data_w_label[:3]
@@ -557,9 +551,8 @@ class KBGAN():
                 class_metrics = self.discriminator.evaluate_on_classification(valid_data_w_label,
                                                                               optimizing_metric=class_optimizing_metric, threshold=class_threshold)
                 
-                test_perf = (rank_class_balance * rank_metrics[rank_optimizing_metric] + class_metrics[class_optimizing_metric]) / (rank_class_balance + 1)
-                logging.info('Validation at epoch %d: %s=%f, %s=%f, Perf=%f', 
-                            epoch + 1, rank_optimizing_metric, rank_metrics[rank_optimizing_metric], class_optimizing_metric, class_metrics[class_optimizing_metric], test_perf)
+                test_perf = (class_rank_balance * rank_metrics[rank_optimizing_metric] + class_metrics[class_optimizing_metric]) / (class_rank_balance + 1)
+                logging.info(f'Validation at epoch {epoch + 1}: {rank_optimizing_metric}={rank_metrics[rank_optimizing_metric]}, {class_optimizing_metric}={class_metrics[class_optimizing_metric]}, Perf={test_perf}')
                 
                 if test_perf > best_perf:
                     self.save_kbgan()  # Save the best model
@@ -570,7 +563,7 @@ class KBGAN():
                     patience_counter += 1
                     
                 if early_stop_patience > 0 and patience_counter >= early_stop_patience:
-                    logging.info('Early stopping triggered at epoch %d (patience=%d)', epoch + 1, early_stop_patience)
+                    logging.info(f'Early stopping triggered at epoch {epoch + 1} (patience={early_stop_patience})')
                     break
         print(f'Trained KBGAN successfully: {self.generator_type} generator, {self.discriminator_type} discriminator.')
         return best_perf
