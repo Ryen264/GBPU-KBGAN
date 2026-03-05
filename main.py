@@ -17,8 +17,8 @@ CLASS_OPTIMIZING_METRIC = 'accuracy'        # Metric to optimize for triple clas
 CLASS_USE_MAXGOOD_MINBAD_THRESHOLD = False   # Whether to use dynamic threshold based on max_d_good and min_d_bad for classification
 
 def main():
-    config_path = './config/config_' + DATASET + '.yaml'
-    #config_path = './config/config_' + DATASET + '_test.yaml' # Use the test config with smaller epochs for quick testing
+    #config_path = './config/config_' + DATASET + '.yaml'
+    config_path = './config/config_' + DATASET + '_test.yaml' # Use the test config with smaller epochs for quick testing
 
     _config = config(config_path)
     working_task = _config.task # link-prediction / triple-classification / all (all for 'full-train' mode)
@@ -89,7 +89,7 @@ def main():
 
     if MODE == 'full-train':
         # Train 2 components
-        dis_best_perf, gen_best_perf = model.train_components(heads, tails, train_data, valid_data_with_labels,
+        dis_best_perf, gen_best_perf = model.train_components(heads, tails, train_data, valid_data, valid_data_with_labels,
                                                             rank_class_balance=rank_class_balance, early_stop_patience=early_stop_patience,
                                                             rank_optimizing_metric=RANK_OPTIMIZING_METRIC, rank_filt=RANK_FILT, rank_k_list=RANK_K_LIST,
                                                             class_optimizing_metric=CLASS_OPTIMIZING_METRIC, class_threshold=None)

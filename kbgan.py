@@ -74,7 +74,7 @@ class Component():
         head_var, relation_var, tail_var = Variable(head.to(config.device)), Variable(relation.to(config.device)), Variable(tail.to(config.device))
         return self.model.score(head_var, relation_var, tail_var)
 
-    def train(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data_w_label: tuple,
+    def train(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data_no_label: tuple, valid_data_w_label: tuple,
               rank_class_balance: float = 1.0, early_stop_patience: int=-1,
               rank_optimizing_metric: str='mrr', rank_filt: bool=True, rank_k_list: list=[1, 3, 10],
               class_optimizing_metric: str='accuracy', class_threshold: float=None) -> float:    
@@ -88,7 +88,6 @@ class Component():
         else:
             raise ValueError(f"Unsupported model type: {self.model_type}")
 
-        valid_data_no_label = valid_data_w_label[:3]
         rank_metrics = lambda: self.evaluate_on_ranking(valid_data_no_label, heads, tails,
                                                         filt=rank_filt, k_list=rank_k_list)
         
@@ -401,7 +400,7 @@ class KBGAN():
         self.discriminator.save(filepath)
         print(f"Saved KBGAN (discriminator) successfully to: {filepath}")
         
-    def train_components(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data_w_label: tuple,
+    def train_components(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data_no_label: tuple, valid_data_w_label: tuple,
                         rank_class_balance: float=5.0, early_stop_patience: int=-1,
                         rank_optimizing_metric: str='mrr', rank_filt: bool=True, rank_k_list: list=[1, 3, 10],
                         class_optimizing_metric: str='accuracy', class_threshold: float=None) -> Tuple[float, float]:
@@ -410,13 +409,13 @@ class KBGAN():
         if not isinstance(valid_data_w_label[0], torch.Tensor):
             valid_data_w_label = [torch.LongTensor(vec) for vec in valid_data_w_label]
 
-        best_perf_d = self.discriminator.train(heads, tails, train_data, valid_data_w_label,
+        best_perf_d = self.discriminator.train(heads, tails, train_data, valid_data_no_label, valid_data_w_label,
                                                 rank_class_balance=rank_class_balance, early_stop_patience=early_stop_patience,
                                                 rank_optimizing_metric=rank_optimizing_metric, rank_filt=rank_filt, rank_k_list=rank_k_list,
                                                 class_optimizing_metric=class_optimizing_metric, class_threshold=class_threshold)
         print(f"Trained {self.discriminator_type} discriminator successfully with performance: {best_perf_d}")
 
-        best_perf_g = self.generator.train(heads, tails, train_data, valid_data_w_label,
+        best_perf_g = self.generator.train(heads, tails, train_data, valid_data_no_label, valid_data_w_label,
                                             rank_class_balance=rank_class_balance, early_stop_patience=early_stop_patience,
                                             rank_optimizing_metric=rank_optimizing_metric, rank_filt=rank_filt, rank_k_list=rank_k_list,
                                             class_optimizing_metric=class_optimizing_metric, class_threshold=class_threshold)
