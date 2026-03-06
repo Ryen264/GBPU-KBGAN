@@ -84,6 +84,9 @@ def main():
 
     if MODE == 'full-train':
         # Train 2 components
+        print(f"Training {dis_type} discriminator and {gen_type} generator components with paramenters: class_rank_balance={class_rank_balance}, early_stop_patience={early_stop_patience}, "
+            + f"rank_optimizing_metric={RANK_OPTIMIZING_METRIC}, rank_filt={RANK_FILT}, rank_k_list={RANK_K_LIST}, "
+            + f"class_optimizing_metric={CLASS_OPTIMIZING_METRIC}, class_threshold=None")
         dis_best_perf, gen_best_perf = model.train_components(heads, tails, train_data, valid_data_with_labels,
                                                             class_rank_balance=class_rank_balance, early_stop_patience=early_stop_patience,
                                                             rank_optimizing_metric=RANK_OPTIMIZING_METRIC, rank_filt=RANK_FILT, rank_k_list=RANK_K_LIST,
@@ -114,6 +117,10 @@ def main():
         print("----------------")
 
         # Train KBGAN
+        print(f"Training KBGAN with paramenters: class_rank_balance={class_rank_balance}, early_stop_patience={early_stop_patience}, "
+            + f"temperature={temperature}, n_sample={n_sample}, n_epoch={n_epoch}, n_batch={n_batch}, epoch_per_test={epoch_per_test}, "
+            + f"rank_optimizing_metric={RANK_OPTIMIZING_METRIC}, rank_filt={RANK_FILT}, rank_k_list={RANK_K_LIST}, "
+            + f"class_optimizing_metric={CLASS_OPTIMIZING_METRIC}, class_use_maxgood_minbad_threshold={CLASS_USE_MAXGOOD_MINBAD_THRESHOLD}")
         best_perf = model.train_kbgan(heads, tails, train_data, valid_data_with_labels,
                                     class_rank_balance=class_rank_balance, early_stop_patience=early_stop_patience,
                                     temperature=temperature, n_sample=n_sample, n_epoch=n_epoch, n_batch=n_batch, epoch_per_test=epoch_per_test,
@@ -142,6 +149,10 @@ def main():
         print("----------------")
 
         # Train KBGAN
+        print(f"Training KBGAN with paramenters: class_rank_balance={class_rank_balance}, early_stop_patience={early_stop_patience}, "
+            + f"temperature={temperature}, n_sample={n_sample}, n_epoch={n_epoch}, n_batch={n_batch}, epoch_per_test={epoch_per_test}, "
+            + f"rank_optimizing_metric={RANK_OPTIMIZING_METRIC}, rank_filt={RANK_FILT}, rank_k_list={RANK_K_LIST}, "
+            + f"class_optimizing_metric={CLASS_OPTIMIZING_METRIC}, class_use_maxgood_minbad_threshold={CLASS_USE_MAXGOOD_MINBAD_THRESHOLD}")
         best_perf = model.train_kbgan(heads, tails, train_data, valid_data_with_labels,
                                     class_rank_balance=class_rank_balance, early_stop_patience=early_stop_patience,
                                     temperature=temperature, n_sample=n_sample, n_epoch=n_epoch, n_batch=n_batch, epoch_per_test=epoch_per_test,
