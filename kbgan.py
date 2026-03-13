@@ -46,6 +46,7 @@ class Component():
             self.model = ComplEx(self.n_entity, self.n_relation)
 
         self.model_path = self.model.model_path
+        self.classification_threshold = None
         print(f"Initialized component successfully: {self.model_type} model with role {self.role}, n_entity={self.n_entity}, n_relation={self.n_relation}.")
 
     def load(self, model_path: str) -> None:
@@ -77,7 +78,7 @@ class Component():
     def train(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data_w_label: tuple,
               class_rank_balance: float = 1.0, early_stop_patience: int=-1,
               rank_optimizing_metric: str='mrr', rank_filt: bool=True, rank_k_list: list=[1, 3, 10],
-              class_optimizing_metric: str='accuracy', class_threshold: float=None) -> float:    
+              class_optimizing_metric: str='accuracy') -> float:    
         config.overwrite_config_with_args(["--log.prefix=" + self.model_type + '_'])
         config.logger_init()
 
@@ -95,7 +96,7 @@ class Component():
                                                         filt=rank_filt, k_list=rank_k_list)
         
         class_metrics = lambda: self.evaluate_on_classification(valid_data_w_label,
-                                                                optimizing_metric=class_optimizing_metric, threshold=class_threshold)
+                                                                optimizing_metric=class_optimizing_metric, is_threshold_tunning=True)
         tester = lambda: (class_rank_balance * rank_metrics()[rank_optimizing_metric] + class_metrics()[class_optimizing_metric]) / (class_rank_balance + 1)
 
         best_perf, best_epoch = self.model.train(train_data,
@@ -243,10 +244,7 @@ class Component():
         ranking_metrics_str = f"Ranking metrics: {ranking_metrics_display}\n"
         logging.info(ranking_metrics_str)
         return ranking_metrics
-
-    def evaluate_on_classification(self, test_data_w_label: tuple,
-                                   optimizing_metric: str='accuracy', threshold: float=None) -> dict:       
-        def find_optimal_threshold(valid_data: tuple, labels: list, n_thresholds: int=100) -> Tuple[float, bool]:
+    def find_optimal_threshold(self, valid_data: tuple, labels: list, n_thresholds: int=100, optimizing_metric: str='accuracy') -> Tuple[float, bool]:
             """
             Find the optimal threshold for triple classification using validation data.
 
@@ -308,6 +306,9 @@ class Component():
             direction_str = '<' if best_positive_if_lower else '>'
             logging.info(f"Optimal threshold: score {direction_str} {best_threshold:.4f} => positive ({optimizing_metric}={best_val:.4f})")
             return best_threshold, best_positive_if_lower
+    
+    def evaluate_on_classification(self, test_data_w_label: tuple,
+                                   optimizing_metric: str='accuracy', is_threshold_tunning: bool=False, external_threshold: float = None) -> dict:       
 
         if len(test_data_w_label) < 4:
             raise ValueError("For classification metrics, test_data_w_label must include labels as the 4th element (heads, relations, tails, labels).")
@@ -332,13 +333,18 @@ class Component():
 
         if len(scores_list) == 0:
             raise ValueError("No samples found in test_data for classification evaluation.")
-
-        if threshold is None:
+        threshold = None
+        if is_threshold_tunning:
             n_thresholds = 100
-            threshold, positive_if_lower = find_optimal_threshold(valid_data=(heads_list, relations_list, tails_list), labels=true_labels, n_thresholds=n_thresholds)
+            self.classification_threshold, positive_if_lower = self.find_optimal_threshold(valid_data=(heads_list, relations_list, tails_list), labels=true_labels, n_thresholds=n_thresholds, optimizing_metric=optimizing_metric)
+            threshold = self.classification_threshold
             direction_str = '<' if positive_if_lower else '>'
-            logging.info(f"Determined optimal threshold for classification: score {direction_str} {threshold:.4f} => positive, using validation data with {n_thresholds} thresholds.")
+            logging.info(f"Determined optimal threshold for classification: score {direction_str} {self.classification_threshold:.4f} => positive, using validation data with {n_thresholds} thresholds.")
         else:
+            if external_threshold != None:
+                threshold = external_threshold
+            else:
+                threshold = self.classification_threshold
             positive_if_lower = self.model.is_distance_based
 
         # Vectorized prediction generation
@@ -355,7 +361,19 @@ class Component():
         # Format metrics for cleaner output
         classification_metrics_display = {k: f"{v:.4f}" if isinstance(v, float) else v for k, v in classification_metrics.items()}
         classification_metrics_str = f"Classification metrics: {classification_metrics_display}\n"
+
+        threshold_source = None
+        if external_threshold is not None:
+            threshold_source = "External threshold"
+        else:
+            threshold_source = "Internal threshold"
+        
         logging.info(classification_metrics_str)
+        logging.info(
+            f"[Classification] threshold_source={threshold_source}, "
+            f"threshold={threshold:.6f}, positive_if_lower={positive_if_lower}"
+        )
+        
         return classification_metrics
 
 class KBGAN():
@@ -409,7 +427,7 @@ class KBGAN():
     def train_components(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data_w_label: tuple,
                         class_rank_balance: float=5.0, early_stop_patience: int=-1,
                         rank_optimizing_metric: str='mrr', rank_filt: bool=True, rank_k_list: list=[1, 3, 10],
-                        class_optimizing_metric: str='accuracy', class_threshold: float=None) -> Tuple[float, float]:
+                        class_optimizing_metric: str='accuracy') -> Tuple[float, float]:
         if not isinstance(train_data[0], torch.Tensor):
             train_data = [torch.LongTensor(vec) for vec in train_data]
         if not isinstance(valid_data_w_label[0], torch.Tensor):
@@ -418,13 +436,13 @@ class KBGAN():
         best_perf_d, best_epoch_d = self.discriminator.train(heads, tails, train_data, valid_data_w_label,
                                                 class_rank_balance=class_rank_balance, early_stop_patience=early_stop_patience,
                                                 rank_optimizing_metric=rank_optimizing_metric, rank_filt=rank_filt, rank_k_list=rank_k_list,
-                                                class_optimizing_metric=class_optimizing_metric, class_threshold=class_threshold)
+                                                class_optimizing_metric=class_optimizing_metric)
         print(f"Trained {self.discriminator_type} discriminator successfully with performance: {best_perf_d}, epoch: {best_epoch_d}")
 
         best_perf_g, best_epoch_g = self.generator.train(heads, tails, train_data, valid_data_w_label,
                                             class_rank_balance=class_rank_balance, early_stop_patience=early_stop_patience,
                                             rank_optimizing_metric=rank_optimizing_metric, rank_filt=rank_filt, rank_k_list=rank_k_list,
-                                            class_optimizing_metric=class_optimizing_metric, class_threshold=class_threshold)
+                                            class_optimizing_metric=class_optimizing_metric)
         print(f"Trained {self.generator_type} generator successfully with performance: {best_perf_g}, epoch: {best_epoch_g}")
         return best_perf_d, best_perf_g
            
@@ -559,7 +577,7 @@ class KBGAN():
                 if class_rank_balance != 0:
                     class_threshold = self.optimal_threshold if class_use_maxgood_minbad_threshold else None
                     class_metrics = self.discriminator.evaluate_on_classification(valid_data_w_label,
-                                                                                  optimizing_metric=class_optimizing_metric, threshold=class_threshold)
+                                                                                  optimizing_metric=class_optimizing_metric, is_threshold_tunning=False, external_threshold=class_threshold)
                     
                     test_perf = (class_rank_balance * rank_metrics[rank_optimizing_metric] + class_metrics[class_optimizing_metric]) / (class_rank_balance + 1)
                     logging.info(f'Validation at epoch {epoch + 1}: {rank_optimizing_metric}={rank_metrics[rank_optimizing_metric]}, {class_optimizing_metric}={class_metrics[class_optimizing_metric]}, Perf={test_perf}')
@@ -599,5 +617,5 @@ class KBGAN():
         print("Evaluating KBGAN discriminator on Triple Classification...")
         threshold = self.optimal_threshold if use_maxgood_minbad_threshold else None
         metrics = self.discriminator.evaluate_on_classification(test_data_w_label,
-                                                                optimizing_metric=optimizing_metric, threshold=threshold)
+                                                                optimizing_metric=optimizing_metric, is_threshold_tunning=False, external_threshold=threshold)
         return metrics
