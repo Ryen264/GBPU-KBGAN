@@ -48,6 +48,8 @@ class Component():
         self.model_path = self.model.model_path
         print(f"Initialized component successfully: {self.model_type} model with role {self.role}, n_entity={self.n_entity}, n_relation={self.n_relation}.")
 
+        self.class_threshold = None
+
     def load(self, model_path: str) -> None:
         if (self.n_entity is None or self.n_relation is None):
             raise ValueError("Component must be fitted before being loaded!")
