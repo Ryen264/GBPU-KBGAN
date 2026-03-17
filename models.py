@@ -32,7 +32,7 @@ class TransEModule(BaseModule):
 
     def init_weight(self) -> None:
         for param in self.parameters():
-            param.data.normal_(1 / param.size(1) ** 0.5)
+            param.data.normal_(0, 1 / param.size(1) ** 0.5)
             param.data.renorm_(2, 0, 1)
 
     def forward(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
