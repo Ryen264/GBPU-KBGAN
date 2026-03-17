@@ -17,8 +17,8 @@ CLASS_OPTIMIZING_METRIC = 'accuracy'        # Metric to optimize for triple clas
 CLASS_USE_MAXGOOD_MINBAD_THRESHOLD = True   # Whether to use dynamic threshold based on max_d_good and min_d_bad for classification
 
 def main():
-    config_path = './config/config_' + DATASET + '.yaml'
-    # config_path = './config/config_' + DATASET + '_test.yaml' # Use the test config with smaller epochs for quick testing
+    #config_path = './config/config_' + DATASET + '.yaml'
+    config_path = './config/config_' + DATASET + '_baseline.yaml' # Use the test config with smaller epochs for quick testing
 
     _config = config(config_path)
     working_task = _config.task # link-prediction / triple-classification / all (all for 'full-train' mode)
@@ -90,7 +90,7 @@ def main():
         dis_best_perf, gen_best_perf = model.train_components(heads, tails, train_data, valid_data_with_labels,
                                                             class_rank_balance=class_rank_balance, early_stop_patience=early_stop_patience,
                                                             rank_optimizing_metric=RANK_OPTIMIZING_METRIC, rank_filt=RANK_FILT, rank_k_list=RANK_K_LIST,
-                                                            class_optimizing_metric=CLASS_OPTIMIZING_METRIC, class_threshold=None)
+                                                            class_optimizing_metric=CLASS_OPTIMIZING_METRIC)
         t_step = log_step("Pretrain components", t_step)
         print("----------------")
 
@@ -98,7 +98,7 @@ def main():
         dis_ranking_metrics = model.discriminator.evaluate_on_ranking(test_data_no_label, heads, tails,
                                                                     filt=RANK_FILT, k_list=RANK_K_LIST)
         print(f"Discriminator metrics on Link Prediction: {dis_ranking_metrics}")
-
+        
         gen_ranking_metrics = model.generator.evaluate_on_ranking(test_data_no_label, heads, tails,
                                                                 filt=RANK_FILT, k_list=RANK_K_LIST)
         print(f"Generator metrics on Link Prediction: {gen_ranking_metrics}")
@@ -107,13 +107,15 @@ def main():
 
         # Test 2 components just be trained on triple classification
         dis_classification_metrics = model.discriminator.evaluate_on_classification(test_data_with_labels,
-                                                                                    optimizing_metric=CLASS_OPTIMIZING_METRIC, threshold=None)
+                                                                                    optimizing_metric=CLASS_OPTIMIZING_METRIC, is_threshold_tunning=False)
         print(f"Discriminator metrics on Triple Classification: {dis_classification_metrics}")
+        print(f"Classification threshold for Discriminator: {model.discriminator.classification_threshold}")
         t_step = log_step("Component triple classification eval", t_step)
 
         gen_classification_metrics = model.generator.evaluate_on_classification(test_data_with_labels,
-                                                                                optimizing_metric=CLASS_OPTIMIZING_METRIC, threshold=None)
+                                                                                optimizing_metric=CLASS_OPTIMIZING_METRIC, is_threshold_tunning=False)
         print(f"Generator metrics on Triple Classification: {gen_classification_metrics}")
+        print(f"Classification threshold for Generator: {model.generator.classification_threshold}")
         print("----------------")
 
         # Train KBGAN
