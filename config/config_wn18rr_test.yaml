@@ -4,11 +4,11 @@ test_batch_size: 10
 dataset: wn18rr
 task: all
 KBGAN:
-  class_rank_balance: 0.0
+  class_rank_balance: 0.5
   early_stop_patience: -1
   temperature: 1.0
   n_sample: 20
-  n_epoch: 50
+  n_epoch: 200
   n_batch: 10
   epoch_per_test: 10
 TransE:
@@ -18,7 +18,7 @@ TransE:
   margin: 3
   p: 1
   temp: 1
-  n_epoch: 10
+  n_epoch: 100
   n_batch: 10
   epoch_per_test: 5
   model_file: TransE.mdl
@@ -29,7 +29,7 @@ TransD:
   margin: 3
   p: 1
   temp: 1
-  n_epoch: 10
+  n_epoch: 100
   n_batch: 10
   epoch_per_test: 5
   model_file: TransD.mdl
@@ -41,7 +41,7 @@ DistMult:
   lam: 0.1
   n_sample: 20
   sample_freq: 1
-  n_epoch: 10
+  n_epoch: 100
   n_batch: 10
   epoch_per_test: 5
   model_file: DistMult.mdl
@@ -53,7 +53,7 @@ ComplEx:
   lam: 0.1
   n_sample: 20
   sample_freq: 1
-  n_epoch: 10
+  n_epoch: 100
   n_batch: 10
   epoch_per_test: 5
   model_file: ComplEx.mdl

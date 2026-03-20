@@ -50,11 +50,11 @@ def main():
     n_batch = _config['KBGAN']['n_batch']
     epoch_per_test = _config['KBGAN']['epoch_per_test']
     kbg_cfg = _config['KBGAN']
-    n_generated_valid_negative = kbg_cfg.get('n_generated_valid_negative', 0)
-    loss_join_method = kbg_cfg.get('loss_join_method', 'adaptive_weight')
+    n_generated_valid_negative = kbg_cfg.get('n_generated_valid_negative', 5)
+    join_loss_method = kbg_cfg.get('join_loss_method', 'adaptive_norm')
     loss_ema_beta = kbg_cfg.get('loss_ema_beta', 0.98)
-    class_rank_balance_start = kbg_cfg.get('class_rank_balance_start', class_rank_balance)
-    class_rank_balance_warmup_epochs = kbg_cfg.get('class_rank_balance_warmup_epochs', 0)
+    class_rank_balance_start = kbg_cfg.get('class_rank_balance_start', 0.2)
+    class_rank_balance_warmup_epochs = kbg_cfg.get('class_rank_balance_warmup_epochs', 10)
 
     # Assign or construct pretrained components' paths for 'gan-train' mode
     pretrained_dis_path = os.path.join('.', 'models', DATASET, working_task, 'components', dis_type + '.mdl')
@@ -113,12 +113,10 @@ def main():
         print(f"Testing component on Link Prediction: {dis_type} discriminator")
         dis_ranking_metrics = model.discriminator.evaluate_on_ranking(test_data_no_label, heads, tails,
                                                                     filt=RANK_FILT, k_list=RANK_K_LIST)
-        print(f"Discriminator metrics on Link Prediction: {dis_ranking_metrics}")
         
         print(f"Testing component on Link Prediction: {gen_type} generator")
         gen_ranking_metrics = model.generator.evaluate_on_ranking(test_data_no_label, heads, tails,
                                                                 filt=RANK_FILT, k_list=RANK_K_LIST)
-        print(f"Generator metrics on Link Prediction: {gen_ranking_metrics}")
 
         t_step = log_step("Component link prediction eval", t_step)
         print("----------------")
@@ -127,13 +125,11 @@ def main():
         print(f"Testing component on Triple Classification: {dis_type} discriminator")
         dis_classification_metrics = model.discriminator.evaluate_on_classification(test_data_with_labels,
                                                                                     optimizing_metric=CLASS_OPTIMIZING_METRIC, is_threshold_tunning=False)
-        print(f"Discriminator metrics on Triple Classification: {dis_classification_metrics}")
         print(f"Classification threshold for Discriminator: {model.discriminator.classification_threshold}")
 
         print(f"Testing component on Triple Classification: {gen_type} generator")
         gen_classification_metrics = model.generator.evaluate_on_classification(test_data_with_labels,
                                                                                 optimizing_metric=CLASS_OPTIMIZING_METRIC, is_threshold_tunning=False)
-        print(f"Generator metrics on Triple Classification: {gen_classification_metrics}")
         print(f"Classification threshold for Generator: {model.generator.classification_threshold}")
 
         t_step = log_step("Component triple classification eval", t_step)
@@ -145,7 +141,7 @@ def main():
             + f"\tn_epoch={n_epoch}\n\tn_batch={n_batch}\n\tepoch_per_test={epoch_per_test}\n"
             + f"\trank_optimizing_metric={RANK_OPTIMIZING_METRIC}\n\trank_filt={RANK_FILT}\n\trank_k_list={RANK_K_LIST}\n"
             + f"\tclass_optimizing_metric={CLASS_OPTIMIZING_METRIC}\n\tclass_use_maxgood_minbad_threshold={CLASS_USE_MAXGOOD_MINBAD_THRESHOLD}\n"
-            + f"\tn_generated_valid_negative={n_generated_valid_negative}\n\tloss_join_method={loss_join_method}\n\tloss_ema_beta={loss_ema_beta}\n"
+            + f"\tn_generated_valid_negative={n_generated_valid_negative}\n\tjoin_loss_method={join_loss_method}\n\tloss_ema_beta={loss_ema_beta}\n"
             + f"\tclass_rank_balance_start={class_rank_balance_start}\n\tclass_rank_balance_warmup_epochs={class_rank_balance_warmup_epochs}")
         best_perf = model.train_kbgan(heads, tails, train_data, valid_data_with_labels,
                                     class_rank_balance=class_rank_balance, early_stop_patience=early_stop_patience,
@@ -157,7 +153,7 @@ def main():
                                     class_rank_balance_start=class_rank_balance_start,
                                     class_rank_balance_warmup_epochs=class_rank_balance_warmup_epochs,
                                     negative_sampling_strategy=negative_sampling_strategy,
-                                    loss_join_method=loss_join_method, loss_ema_beta=loss_ema_beta)
+                                    join_loss_method=join_loss_method, loss_ema_beta=loss_ema_beta)
         print(f"Best validation performance while training: {best_perf}")
         t_step = log_step("Train KBGAN", t_step)
         print("----------------")
@@ -189,7 +185,7 @@ def main():
             + f"\tn_epoch={n_epoch}\n\tn_batch={n_batch}\n\tepoch_per_test={epoch_per_test}\n"
             + f"\trank_optimizing_metric={RANK_OPTIMIZING_METRIC}\n\trank_filt={RANK_FILT}\n\trank_k_list={RANK_K_LIST}\n"
             + f"\tclass_optimizing_metric={CLASS_OPTIMIZING_METRIC}\n\tclass_use_maxgood_minbad_threshold={CLASS_USE_MAXGOOD_MINBAD_THRESHOLD}\n"
-            + f"\tn_generated_valid_negative={n_generated_valid_negative}\n\tloss_join_method={loss_join_method}\n\tloss_ema_beta={loss_ema_beta}\n"
+            + f"\tn_generated_valid_negative={n_generated_valid_negative}\n\tjoin_loss_method={join_loss_method}\n\tloss_ema_beta={loss_ema_beta}\n"
             + f"\tclass_rank_balance_start={class_rank_balance_start}\n\tclass_rank_balance_warmup_epochs={class_rank_balance_warmup_epochs}")
         best_perf = model.train_kbgan(heads, tails, train_data, valid_data_with_labels,
                                     class_rank_balance=class_rank_balance, early_stop_patience=early_stop_patience,
@@ -201,7 +197,7 @@ def main():
                                     class_rank_balance_start=class_rank_balance_start,
                                     class_rank_balance_warmup_epochs=class_rank_balance_warmup_epochs,
                                     negative_sampling_strategy=negative_sampling_strategy,
-                                    loss_join_method=loss_join_method, loss_ema_beta=loss_ema_beta)
+                                    join_loss_method=join_loss_method, loss_ema_beta=loss_ema_beta)
         print(f"Best validation performance while training: {best_perf}")
         t_step = log_step("Train KBGAN", t_step)
         print("----------------")

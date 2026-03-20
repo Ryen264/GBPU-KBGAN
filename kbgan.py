@@ -480,7 +480,7 @@ class KBGAN():
                 class_optimizing_metric: str='accuracy', class_use_maxgood_minbad_threshold: bool=True,
                 class_rank_balance_start: float=None, class_rank_balance_warmup_epochs: int=0,
                 negative_sampling_strategy: str='multinomial',
-                loss_join_method: str='adaptive_weight', loss_ema_beta: float=0.98) -> float:
+                join_loss_method: str='adaptive_weight', loss_ema_beta: float=0.98) -> float:
         """
         class_rank_balance is a ratio in [0, 1]:
         - 0.0 => optimize ranking only
@@ -489,7 +489,7 @@ class KBGAN():
         class_rank_balance_start and class_rank_balance_warmup_epochs optionally define
         a linear optimization schedule from start -> class_rank_balance.
 
-        loss_join_method:
+        joint_loss_method:
         - 'fixed': total = (1-b)*rank + b*class
         - 'adaptive_norm': normalize each loss by EMA magnitude before mixing
         - 'adaptive_weight': apply EMA inverse-loss weighting on raw losses before mixing
@@ -503,98 +503,99 @@ class KBGAN():
         if not isinstance(valid_data_w_label[0], torch.Tensor):
             valid_data_w_label = [torch.LongTensor(vec) for vec in valid_data_w_label]
 
-        if class_rank_balance < 0.0 or class_rank_balance > 1.0:
-            raise ValueError("class_rank_balance must be in [0, 1].")
-        if n_candidate is None:
-            n_candidate = n_sample
-        if n_sample <= 0 or n_candidate <= 0:
-            raise ValueError("n_sample and n_candidate must be positive integers.")
-        if n_candidate < n_sample:
-            raise ValueError("n_candidate must be >= n_sample so generator can select n_sample outputs.")
-        if class_rank_balance_start is None:
-            class_rank_balance_start = class_rank_balance
-        if class_rank_balance_start < 0.0 or class_rank_balance_start > 1.0:
-            raise ValueError("class_rank_balance_start must be in [0, 1].")
-        if class_rank_balance_warmup_epochs < 0:
-            raise ValueError("class_rank_balance_warmup_epochs must be >= 0.")
-        if n_generated_valid_negative < 0:
-            raise ValueError("n_generated_valid_negative must be >= 0.")
-        if negative_sampling_strategy not in ['multinomial', 'topk']:
-            raise ValueError("negative_sampling_strategy must be one of ['multinomial', 'topk']")
-        if loss_join_method not in ['fixed', 'adaptive_norm', 'adaptive_weight']:
-            raise ValueError("loss_join_method must be one of ['fixed', 'adaptive_norm', 'adaptive_weight']")
-        if loss_ema_beta < 0.0 or loss_ema_beta >= 1.0:
-            raise ValueError("loss_ema_beta must be in [0, 1).")
-
-        # Define classification loss in logit space for numerical stability.
-        # Use -score as positive-class logit so lower score => more likely positive.
-        bce_logits_criterion = torch.nn.BCEWithLogitsLoss()
-
         # Convert to plain lists for BernCorrupterMulti so dict keys use value-based hashing
         train_data_list = [d.tolist() if isinstance(d, torch.Tensor) else d for d in train_data]
+
+        # [ORIGINAL KBGAN]
         corrupter = BernCorrupterMulti(train_data_list, self.n_entity, self.n_relation, n_candidate)
         head, relation, tail = train_data
         n_train = len(head)
-
         best_perf = 0.0
         avg_reward = 0.0
+
+        # [CLASS TASK]
+        #   Define classification loss in logit space for numerical stability.
+        #   Use -score as positive-class logit so lower score => more likely positive.
+        do_class_task = (class_rank_balance > 0.0)
+        if do_class_task:
+            bce_logits_criterion = torch.nn.BCEWithLogitsLoss()
+
+        # [EARLY STOPPING]
         patience_counter = 0
+
+        # [EMA BETA]
         ema_rank = None
         ema_class = None
-        loss_norm_eps = 1e-8
+
+        # [WARM-UP BALANCE]
+        warmup_complete = False
+
         for epoch in range(n_epoch):
-            if class_rank_balance_warmup_epochs > 0:
-                warmup_progress = min(float(epoch + 1) / float(class_rank_balance_warmup_epochs), 1.0)
-                class_rank_balance_opt = class_rank_balance_start + \
-                    (class_rank_balance - class_rank_balance_start) * warmup_progress
+            # [WARM-UP BALANCE]
+            #   Compute class_rank_balance_opt: linear warmup from start -> target over warmup_epochs
+            if class_rank_balance_warmup_epochs > 0 and not warmup_complete:
+                if epoch + 1 >= class_rank_balance_warmup_epochs:
+                    # Warmup complete: use target balance
+                    class_rank_balance_opt = class_rank_balance
+                    warmup_complete = True
+                else:
+                    # Still in warmup: interpolate linearly
+                    warmup_progress = float(epoch + 1) / float(class_rank_balance_warmup_epochs)
+                    class_rank_balance_opt = class_rank_balance_start + \
+                        (class_rank_balance - class_rank_balance_start) * warmup_progress
             else:
                 class_rank_balance_opt = class_rank_balance
 
+            # [ORIGINAL KBGAN]
             epoch_d_loss = 0
+            epoch_reward = 0.0
+
+            # [JOINT LOSS]
             epoch_rank_loss = 0
             epoch_class_loss = 0
-            epoch_rank_loss_norm = 0
-            epoch_class_loss_norm = 0
-            epoch_rank_weight = 0
-            epoch_class_weight = 0
-            epoch_reward = 0
 
+            # [ORIGINAL KBGAN]
             head_cand, relation_cand, tail_cand = corrupter.corrupt(head, relation, tail, keep_truth=False)
             for h, r, t, hs, rs, ts in batch_by_num(n_batch, head, relation, tail,
                                                     head_cand, relation_cand, tail_cand, n_sample=n_train):             
+                # [JOINT LOSS]
                 batch_size = h.size(0)
 
                 # --- Generator Step ---
-                gen_step = self.generator.generator_step(hs, rs, ts,
-                                                        n_sample=n_sample,
-                                                        temperature=temperature,
-                                                        train=True,
-                                                        sampling_strategy=negative_sampling_strategy)
+                # [ORIGINAL KBGAN]
+                gen_step = self.generator.generator_step(hs, rs, ts, n_sample=n_sample, temperature=temperature,
+                                                        train=True, sampling_strategy=negative_sampling_strategy)
                 head_smpl, tail_smpl = next(gen_step)
+
+                # [GPU]
                 head_smpl_device, tail_smpl_device = head_smpl.to(config.device), tail_smpl.to(config.device)
                 
                 # --- Discriminator Step ---
                 # 1. Get Ranking Loss (and rewards for Generator)
-                loss_rank, rewards, d_good_max, d_bad_min = self.discriminator.discriminator_step(head=h, relation=r, tail=t,
-                                                                                  head_fake=head_smpl_device,
-                                                                                  tail_fake=tail_smpl_device,
-                                                                                  train=True)
-                # Calculate ranking loss
-                loss_rank_scalar = torch.mean(loss_rank)
-                
-                # DIAGNOSTIC: Check gradient flow and margin satisfaction
-                if epoch % 100 == 0 and h.size(0) <= n_batch:  # Log first batch of every 100th epoch
-                    margin_gap = d_bad_min - d_good_max
-                    logging.debug(
-                        f"  [Batch] d_good_max={d_good_max:.4f}, d_bad_min={d_bad_min:.4f}, "
-                        f"margin_gap={margin_gap:.4f}, loss_rank_mean={loss_rank_scalar.item():.6f}, "
-                        f"loss_rank_max={torch.max(loss_rank).item():.6f}, loss_rank_min={torch.min(loss_rank).item():.6f}"
-                    )
+                # [ORIGINAL KBGAN]
+                rank_loss, rewards, d_good_max, d_bad_min = self.discriminator.discriminator_step(head=h, relation=r, tail=t,
+                                                                                head_fake=head_smpl_device, tail_fake=tail_smpl_device,
+                                                                                train=True)
+                #   Update Metrics
+                epoch_reward += float(torch.sum(rewards).item())
 
-                if class_rank_balance_opt != 0:
+                #   Update Generator
+                rewards = rewards - avg_reward
+
+                #   Update generator with rewards
+                rewards_for_gen = rewards.unsqueeze(1) if rewards.dim() == 1 else rewards
+                gen_step.send(rewards_for_gen)
+
+                # [RANK TASK]
+                #   Calculate ranking loss
+                rank_loss_scalar = torch.mean(rank_loss)
+
+                # [CLASS TASK]
+                if do_class_task:
                     # 2. Get Classification Loss (direction-consistent with score<threshold=>positive).
                     # Positive-class probability is modeled as sigmoid(-score).
                     pos_score = self.discriminator.score(h, r, t)
+
                     if head_smpl_device.dim() == r.dim() + 1:
                         relation_for_neg = r.unsqueeze(1).expand_as(head_smpl_device)
                     else:
@@ -609,143 +610,105 @@ class KBGAN():
                     target_neg = torch.zeros_like(neg_logits, dtype=torch.float32)
 
                     # Calculate classification loss
-                    loss_class = bce_logits_criterion(pos_logits, target_pos) + bce_logits_criterion(neg_logits, target_neg)
+                    class_loss_scalar = bce_logits_criterion(pos_logits, target_pos) + bce_logits_criterion(neg_logits, target_neg)
 
-                    if loss_join_method in ['adaptive_norm', 'adaptive_weight']:
-                        rank_val = float(loss_rank_scalar.detach().item())
-                        class_val = float(loss_class.detach().item())
+                    # [JOINT LOSS]
+                    if join_loss_method in ['adaptive_norm', 'adaptive_weight']:
+                        rank_val = float(rank_loss_scalar.detach().item())
+                        class_val = float(class_loss_scalar.detach().item())
+
+                        # [EMA BETA]
                         ema_rank = rank_val if ema_rank is None else (loss_ema_beta * ema_rank + (1.0 - loss_ema_beta) * rank_val)
                         ema_class = class_val if ema_class is None else (loss_ema_beta * ema_class + (1.0 - loss_ema_beta) * class_val)
+                    # [JOINT LOSS]
+                    if join_loss_method == 'adaptive_norm':
+                        rank_loss_scaled = rank_loss_scalar / (ema_rank + EPSILON)
+                        class_loss_scaled = class_loss_scalar / (ema_class + EPSILON)
 
-                    if loss_join_method == 'adaptive_norm':
-                        loss_rank_scaled = loss_rank_scalar / (ema_rank + loss_norm_eps)
-                        loss_class_scaled = loss_class / (ema_class + loss_norm_eps)
                         rank_weight = (1.0 - class_rank_balance_opt)
-                        class_weight = class_rank_balance_opt
-                        total_loss = (rank_weight * loss_rank_scaled) + (class_weight * loss_class_scaled)
-                    elif loss_join_method == 'adaptive_weight':
-                        inv_rank = (1.0 - class_rank_balance_opt) / (ema_rank + loss_norm_eps)
-                        inv_class = class_rank_balance_opt / (ema_class + loss_norm_eps)
-                        weight_sum = inv_rank + inv_class + loss_norm_eps
+                        class_weight = class_rank_balance_opt                        
+                    elif join_loss_method == 'adaptive_weight':
+                        rank_loss_scaled = rank_loss_scalar
+                        class_loss_scaled = class_loss_scalar
+
+                        inv_rank = (1.0 - class_rank_balance_opt) / (ema_rank + EPSILON)
+                        inv_class = class_rank_balance_opt / (ema_class + EPSILON)
+                        weight_sum = inv_rank + inv_class + EPSILON
                         rank_weight = inv_rank / weight_sum
                         class_weight = inv_class / weight_sum
-                        loss_rank_scaled = loss_rank_scalar
-                        loss_class_scaled = loss_class
-                        total_loss = (rank_weight * loss_rank_scalar) + (class_weight * loss_class)
                     else:
-                        loss_rank_scaled = loss_rank_scalar
-                        loss_class_scaled = loss_class
+                        rank_loss_scaled = rank_loss_scalar
+                        class_loss_scaled = class_loss_scalar
+
                         rank_weight = (1.0 - class_rank_balance_opt)
                         class_weight = class_rank_balance_opt
-                        # Joint objective using class_rank_balance
-                        total_loss = (rank_weight * loss_rank_scaled) + (class_weight * loss_class_scaled)
+                    total_loss = (rank_weight * rank_loss_scaled) + (class_weight * class_loss_scaled)
                 else:
                     # Only ranking loss (Link Prediction only)
-                    loss_class = torch.tensor(0.0)
-                    total_loss = loss_rank_scalar
-                    loss_rank_scaled = loss_rank_scalar
-                    loss_class_scaled = loss_class
+                    class_loss_scalar = torch.tensor(0.0)
+
+                    rank_loss_scaled = rank_loss_scalar
+                    class_loss_scaled = class_loss_scalar
+
                     rank_weight = 1.0
                     class_weight = 0.0
 
+                    total_loss = rank_loss_scalar
                 # Optimizer Step
                 self.discriminator.opt_zero_grad()
-                
-                # DIAGNOSTIC: Check gradients before backward
-                if epoch % 100 == 0 and h.size(0) <= n_batch:
-                    grad_norms_before = {}
-                    for name, param in self.discriminator.model.named_parameters():
-                        if param.grad is not None:
-                            grad_norms_before[name] = float(param.grad.norm().item())
-                
                 total_loss.backward()
-                
-                # DIAGNOSTIC: Check gradients after backward
-                if epoch % 100 == 0 and h.size(0) <= n_batch:
-                    grad_norms_after = {}
-                    total_grad_norm = 0.0
-                    for name, param in self.discriminator.model.named_parameters():
-                        if param.grad is not None:
-                            grad_norm = float(param.grad.norm().item())
-                            grad_norms_after[name] = grad_norm
-                            total_grad_norm += grad_norm ** 2
-                    total_grad_norm = float(np.sqrt(total_grad_norm))
-                    logging.debug(
-                        f"  [Gradients] total_norm={total_grad_norm:.8f}, "
-                        f"loss_value={total_loss.item():.8f}, rank_loss={loss_rank_scalar.item():.8f}"
-                    )
 
                 # Apply entity embedding constraints (e.g. norm <= 1)
                 self.discriminator.opt_step()
 
-                # Update Metrics
-                epoch_reward += torch.sum(rewards)
-                # total_loss/loss_rank_scalar/loss_class are batch means, so weight by batch size
-                # then divide by n_train at epoch end.
+                # [ORIGINAL KBGAN]
+                #   total_loss/rank_loss_scalar/class_loss are batch means, so weight by batch size
+                #   then divide by n_train at epoch end.
                 epoch_d_loss += total_loss.item() * batch_size
-                epoch_rank_loss += loss_rank_scalar.item() * batch_size
-                epoch_class_loss += loss_class.item() * batch_size
-                epoch_rank_loss_norm += loss_rank_scaled.item() * batch_size
-                epoch_class_loss_norm += loss_class_scaled.item() * batch_size
-                epoch_rank_weight += float(rank_weight) * batch_size
-                epoch_class_weight += float(class_weight) * batch_size
 
-                # Update Generator
-                rewards = rewards - avg_reward
-
-                # Update generator with rewards
-                try:
-                    rewards_for_gen = rewards.unsqueeze(1) if rewards.dim() == 1 else rewards
-                    gen_step.send(rewards_for_gen)
-                except StopIteration:
-                    pass
-                
+                # [JOINT LOSS]
+                epoch_rank_loss += rank_loss_scalar.item() * batch_size
+                epoch_class_loss += class_loss_scalar.item() * batch_size
+            # [ORIGINAL KBGAN]       
             avg_loss = epoch_d_loss / n_train
-            avg_rank_loss = epoch_rank_loss / n_train
-            avg_class_loss = epoch_class_loss / n_train
-            avg_rank_loss_norm = epoch_rank_loss_norm / n_train
-            avg_class_loss_norm = epoch_class_loss_norm / n_train
-            avg_rank_weight = epoch_rank_weight / n_train
-            avg_class_weight = epoch_class_weight / n_train
             avg_reward = epoch_reward / n_train
 
-            ema_rank_str = f"{ema_rank:.6f}" if ema_rank is not None else "N/A"
-            ema_class_str = f"{ema_class:.6f}" if ema_class is not None else "N/A"
-            
-            logging.info(
-                f"Epoch {epoch + 1}/{n_epoch}, Joint_Loss={avg_loss:.6f}, "
-                f"Rank_Loss={avg_rank_loss:.6f}, Class_Loss={avg_class_loss:.6f}, "
-                f"Rank_Used={avg_rank_loss_norm:.6f}, Class_Used={avg_class_loss_norm:.6f}, "
-                f"Rank_W={avg_rank_weight:.4f}, Class_W={avg_class_weight:.4f}, "
-                f"Opt_Balance={class_rank_balance_opt:.4f}, "
-                f"EMA_Rank={ema_rank_str}, EMA_Class={ema_class_str}"
-            )
+            # [JOINT LOSS]
+            avg_rank_loss = epoch_rank_loss / n_train
+            avg_class_loss = epoch_class_loss / n_train
+
+            # [ORIGINAL KBGAN]
+            log_msg = f"Train epoch {epoch + 1}/{n_epoch}, D_loss={avg_loss:.6f}, reward={avg_reward:.6f}"
+
+            # [JOINT LOSS]
+            log_msg += f"\n\t\tRank_Loss={avg_rank_loss:.6f}, Class_Loss={avg_class_loss:.6f}"
+            logging.info(log_msg)
 
             if (epoch + 1) % epoch_per_test == 0:
+                # [RANK TASK]
                 valid_data_no_label = valid_data_w_label[:3]
                 rank_metrics = self.discriminator.evaluate_on_ranking(valid_data_no_label, heads, tails,
                                                                       filt=rank_filt, k_list=rank_k_list)
-                if class_rank_balance != 0:
+                # [CLASS TASK]
+                if do_class_task:
                     class_threshold = None
                     is_threshold_tunning = False
+
+                    # [MAXGOOD MINBAD THRESHOLD]
                     if class_use_maxgood_minbad_threshold:
                         class_threshold = self._compute_midpoint_threshold_from_labeled_data(
                             valid_data_w_label,
                             n_generated_valid_negative=n_generated_valid_negative,
-                            temperature=temperature,
+                            temperature=temperature
                         )
 
                         if class_threshold is not None:
                             self.optimal_threshold = class_threshold
-                            logging.info(
-                                f"Using validation midpoint threshold: {class_threshold:.6f}"
-                            )
+                            logging.info(f"Using validation midpoint threshold: {class_threshold:.6f}")
                         else:
                             # Fallback: tune threshold from validation metrics when midpoint cannot be computed.
                             is_threshold_tunning = True
-                            logging.warning(
-                                "Validation midpoint threshold unavailable. Falling back to threshold tuning on validation set."
-                            )
+                            logging.warning("Validation midpoint threshold unavailable. Falling back to threshold tuning on validation set.")
                     else:
                         # Default behavior when midpoint rule is disabled: tune threshold on validation set.
                         is_threshold_tunning = True
@@ -754,26 +717,32 @@ class KBGAN():
                                                                                   optimizing_metric=class_optimizing_metric,
                                                                                   is_threshold_tunning=is_threshold_tunning,
                                                                                   external_threshold=class_threshold)
+                    
+                    # [JOINT LOSS]
                     test_perf = ((1.0 - class_rank_balance) * rank_metrics[rank_optimizing_metric]) + (class_rank_balance * class_metrics[class_optimizing_metric])
-                    logging.info(
-                        f"Validation at epoch {epoch + 1}: {rank_optimizing_metric}={rank_metrics[rank_optimizing_metric]}, "
-                        f"{class_optimizing_metric}={class_metrics[class_optimizing_metric]}, "
-                        f"Perf={test_perf}"
-                    )
+                    log_msg = f"Valid epoch {epoch + 1}/{n_epoch}, perf={test_perf}"
+
+                    # [JOINT LOSS]
+                    log_msg += f"\n\t{rank_optimizing_metric}={rank_metrics[rank_optimizing_metric]}, {class_optimizing_metric}={class_metrics[class_optimizing_metric]}"
                 else:
                     test_perf = rank_metrics[rank_optimizing_metric]
-                    logging.info(f'Validation at epoch {epoch + 1}: {rank_optimizing_metric}={test_perf}')
-                
+                    log_msg = f"Valid epoch {epoch + 1}/{n_epoch}, perf={test_perf}"
+                logging.info(log_msg)
+
+                # [ORIGINAL KBGAN]
                 if test_perf > best_perf:
-                    self.save_kbgan()  # Save the best model
-                    print(f"Saved KBGAN at epoch {epoch + 1} with performance: {best_perf}")
                     best_perf = test_perf
+                    self.save_kbgan()
+                    print(f"Saved KBGAN at epoch {epoch + 1} with performance: {best_perf}")
+
+                    # [EARLY STOPPING]
                     patience_counter = 0
                 else:
+                    # [EARLY STOPPING]
                     patience_counter += 1
-                    
+                # [EARLY STOPPING]
                 if early_stop_patience > 0 and patience_counter >= early_stop_patience:
-                    logging.info(f'Early stopping triggered at epoch {epoch + 1} (patience={early_stop_patience})')
+                    logging.info(f"Early stopping triggered at epoch {epoch + 1} (patience={early_stop_patience})")
                     break
         print(f'Trained KBGAN successfully: {self.generator_type} generator, {self.discriminator_type} discriminator.')
         return best_perf
