@@ -709,13 +709,16 @@ class KBGAN():
             avg_class_weight = epoch_class_weight / n_train
             avg_reward = epoch_reward / n_train
 
+            ema_rank_str = f"{ema_rank:.6f}" if ema_rank is not None else "N/A"
+            ema_class_str = f"{ema_class:.6f}" if ema_class is not None else "N/A"
+            
             logging.info(
                 f"Epoch {epoch + 1}/{n_epoch}, Joint_Loss={avg_loss:.6f}, "
                 f"Rank_Loss={avg_rank_loss:.6f}, Class_Loss={avg_class_loss:.6f}, "
                 f"Rank_Used={avg_rank_loss_norm:.6f}, Class_Used={avg_class_loss_norm:.6f}, "
                 f"Rank_W={avg_rank_weight:.4f}, Class_W={avg_class_weight:.4f}, "
                 f"Opt_Balance={class_rank_balance_opt:.4f}, "
-                f"EMA_Rank={ema_rank:.6f}, EMA_Class={ema_class:.6f}"
+                f"EMA_Rank={ema_rank_str}, EMA_Class={ema_class_str}"
             )
 
             if (epoch + 1) % epoch_per_test == 0:
