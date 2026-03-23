@@ -15,8 +15,6 @@ venv/
 env/
 ENV/
 
-# Ignore models directory (trained models, large binaries)
-models/
 
 # IDE
 .vscode/

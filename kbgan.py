@@ -480,7 +480,7 @@ class KBGAN():
                 class_optimizing_metric: str='accuracy', class_use_maxgood_minbad_threshold: bool=True,
                 class_rank_balance_start: float=None, class_rank_balance_warmup_epochs: int=0,
                 negative_sampling_strategy: str='multinomial',
-                join_loss_method: str='adaptive_weight', loss_ema_beta: float=0.98) -> float:
+                join_loss_method: str='adaptive_weight', loss_ema_beta: float=0.98,  checkpoint_path: str=None) -> float:
         """
         class_rank_balance is a ratio in [0, 1]:
         - 0.0 => optimize ranking only
@@ -732,7 +732,7 @@ class KBGAN():
                 # [ORIGINAL KBGAN]
                 if test_perf > best_perf:
                     best_perf = test_perf
-                    self.save_kbgan()
+                    self.save_kbgan(checkpoint_path)
                     print(f"Saved KBGAN at epoch {epoch + 1} with performance: {best_perf}")
 
                     # [EARLY STOPPING]

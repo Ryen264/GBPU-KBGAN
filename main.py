@@ -8,7 +8,7 @@ from datasets import convert_data_to_no_label, sparse_heads_tails, inplace_shuff
 from kbgan import KBGAN
 
 # ./main.py mode=<mode> [other optional args to overwrite config]
-MODE = 'full-train'  # full-train / gan-train / test-only
+MODE = 'grid-search'  # full-train / gan-train / test-only / grid-search
 DATASET = 'wn18rr'   # wn18rr / wn18 / fb15k237
 RANK_OPTIMIZING_METRIC = 'mrr'              # Metric to optimize for ranking evaluation (e.g., 'mrr', 'hits@1', etc.)
 RANK_FILT = True                            # Whether to apply filtering in ranking metrics evaluation
@@ -17,8 +17,9 @@ CLASS_OPTIMIZING_METRIC = 'accuracy'        # Metric to optimize for triple clas
 CLASS_USE_MAXGOOD_MINBAD_THRESHOLD = True   # Whether to use dynamic threshold based on max_d_good and min_d_bad for classification
 
 def main():
-    #config_path = './config/config_' + DATASET + '.yaml'
-    config_path = './config/config_' + DATASET + '_test.yaml' # Use the test config with smaller epochs for quick testing
+        
+    config_path = './config/config_' + DATASET + '.yaml'
+    #config_path = './config/config_' + DATASET + '_test.yaml' # Use the test config with smaller epochs for quick testing
 
     _config = config(config_path)
     working_task = _config.task # link-prediction / triple-classification / all (all for 'full-train' mode)
@@ -213,6 +214,68 @@ def main():
                                                                                     optimizing_metric=CLASS_OPTIMIZING_METRIC, use_maxgood_minbad_threshold=CLASS_USE_MAXGOOD_MINBAD_THRESHOLD)
             t_step = log_step("KBGAN triple classification eval", t_step)
         print("----------------")
+    elif MODE == 'grid-search':
+            import itertools
+            import json
+            # Định nghĩa các giá trị hyperparameter cần grid search
+            temperature_list = [0.5, 1.0, 2.0]
+            n_sample_list = [10, 20, 30]
+            class_rank_balance_list = [0.2, 0.5, 0.8]
+
+            results = []
+           
+            os.makedirs( os.path.join('./models/grid-search/', DATASET), exist_ok=True)
+
+
+            for temperature, n_sample, class_rank_balance in itertools.product(temperature_list, n_sample_list, class_rank_balance_list):
+                print(f"[GRID-SEARCH] Running with temperature={temperature}, n_sample={n_sample}, class_rank_balance={class_rank_balance}")
+                # Cập nhật các hyperparameter vào config
+                _config['KBGAN']['temperature'] = temperature
+                _config['KBGAN']['n_sample'] = n_sample
+                _config['KBGAN']['class_rank_balance'] = class_rank_balance
+
+                # Tạo tên file checkpoint riêng cho từng bộ
+                ckpt_name = f"kbgan_temp{temperature}_ns{n_sample}_crb{class_rank_balance}.mdl"
+                ckpt_path = os.path.join('.', 'models', 'grid-search', DATASET, ckpt_name)
+
+                # Khởi tạo lại model với config mới
+                model = KBGAN(discriminator_type=dis_type, generator_type=gen_type,
+                            n_entity=n_entity, n_relation=n_relation)
+
+                # Train trên train, validate trên validation (không test trên test), truyền đường dẫn checkpoint
+                best_perf = model.train_kbgan(heads, tails, train_data, valid_data_with_labels,
+                                            class_rank_balance=class_rank_balance, early_stop_patience=early_stop_patience,
+                                            temperature=temperature, n_sample=n_sample, n_candidate=n_candidate,
+                                            n_epoch=n_epoch, n_batch=n_batch, epoch_per_test=epoch_per_test,
+                                            rank_optimizing_metric=RANK_OPTIMIZING_METRIC, rank_filt=RANK_FILT, rank_k_list=RANK_K_LIST,
+                                            class_optimizing_metric=CLASS_OPTIMIZING_METRIC, class_use_maxgood_minbad_threshold=CLASS_USE_MAXGOOD_MINBAD_THRESHOLD,
+                                            n_generated_valid_negative=n_generated_valid_negative,
+                                            class_rank_balance_start=class_rank_balance_start,
+                                            class_rank_balance_warmup_epochs=class_rank_balance_warmup_epochs,
+                                            negative_sampling_strategy=negative_sampling_strategy,
+                                            join_loss_method=join_loss_method, loss_ema_beta=loss_ema_beta,
+                                            checkpoint_path=ckpt_path)
+                model.load_kbgan(ckpt_path)
+                print("----------------")
+
+                link_prediction_metrics = model.evaluate_on_link_prediction(heads, tails, valid_data_no_label,
+                                                                                filt=RANK_FILT, k_list=RANK_K_LIST)
+                triple_classification_metrics = model.evaluate_on_triple_classification(valid_data_with_labels,
+                                                                                            optimizing_metric=CLASS_OPTIMIZING_METRIC, use_maxgood_minbad_threshold=CLASS_USE_MAXGOOD_MINBAD_THRESHOLD)
+                print(f"[GRID-SEARCH] Best validation performance: {best_perf}")
+                results.append({
+                    "temperature": temperature,
+                    "n_sample": n_sample,
+                    "class_rank_balance": class_rank_balance,
+                    "checkpoint_path": ckpt_path,
+                    "link_prediction_metrics": link_prediction_metrics,
+                    "triple_classification_metrics": triple_classification_metrics
+                })
+
+            # Lưu kết quả grid search ra file
+            with open("grid_search_results.json", "w") as f:
+                json.dump(results, f, indent=4)
+            print("[GRID-SEARCH] Done. Results saved to grid_search_results.json")
     elif MODE == 'test-only':
         # Load pretrained KBGAN
         model.load_kbgan(pretrained_kbgan_path)
