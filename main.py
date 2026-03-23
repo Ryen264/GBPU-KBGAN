@@ -218,9 +218,9 @@ def main():
             import itertools
             import json
             # Định nghĩa các giá trị hyperparameter cần grid search
-            temperature_list = [0.5, 1.0, 2.0]
-            n_sample_list = [10, 20, 30]
-            class_rank_balance_list = [0.2, 0.5, 0.8]
+            temperature_list = [0.2]
+            n_sample_list = [10, 20]
+            class_rank_balance_list = [0.3]
 
             results = []
            
