@@ -478,6 +478,7 @@ class KBGAN():
                 n_epoch: int=5000, n_batch: int=100, epoch_per_test: int=100,
                 rank_optimizing_metric: str='mrr', rank_filt: bool=True, rank_k_list: list=[1, 3, 10],
                 class_optimizing_metric: str='accuracy', class_use_maxgood_minbad_threshold: bool=True,
+                class_true_percentile: float=95.0, class_fake_percentile: float=5.0,
                 class_rank_balance_start: float=None, class_rank_balance_warmup_epochs: int=0,
                 negative_sampling_strategy: str='multinomial',
                 join_loss_method: str='adaptive_weight', loss_ema_beta: float=0.98) -> float:
@@ -699,7 +700,9 @@ class KBGAN():
                         class_threshold = self._compute_midpoint_threshold_from_labeled_data(
                             valid_data_w_label,
                             n_generated_valid_negative=n_generated_valid_negative,
-                            temperature=temperature
+                            temperature=temperature,
+                            true_percentile=class_true_percentile,
+                            fake_percentile=class_fake_percentile,
                         )
 
                         if class_threshold is not None:
@@ -749,20 +752,26 @@ class KBGAN():
 
     def _compute_midpoint_threshold_from_labeled_data(self, data_w_label: tuple,
                                                       n_generated_valid_negative: int=0,
-                                                      temperature: float=1.0) -> float:
+                                                      temperature: float=1.0,
+                                                      true_percentile: float=95.0,
+                                                      fake_percentile: float=5.0) -> float:
         """
         Compute midpoint threshold from labeled triples (and optional generator negatives)
-        using the same rule as training:
-        threshold = (max score of positives + min score of negatives) / 2.
+        using percentile statistics:
+        threshold = (percentile(true scores, true_percentile)
+                     + percentile(fake scores, fake_percentile)) / 2.
         """
         if len(data_w_label) < 4:
             return None
+        
+        if not (0.0 <= true_percentile <= 100.0):
+            raise ValueError("true_percentile must be in [0, 100].")
+        if not (0.0 <= fake_percentile <= 100.0):
+            raise ValueError("fake_percentile must be in [0, 100].")
 
         heads_list, relations_list, tails_list, labels = data_w_label
-        max_d_good = -float('inf')
-        min_d_bad = float('inf')
-        has_pos = False
-        has_neg = False
+        pos_scores = []
+        neg_scores = []
 
         with torch.no_grad():
             for batch_head, batch_relation, batch_tail, batch_label in batch_by_size(
@@ -779,12 +788,10 @@ class KBGAN():
                 neg_mask = (batch_labels == 0)
 
                 if np.any(pos_mask):
-                    has_pos = True
-                    max_d_good = max(max_d_good, float(np.max(batch_scores[pos_mask])))
+                    pos_scores.extend(batch_scores[pos_mask].reshape(-1).tolist())
 
                 if np.any(neg_mask):
-                    has_neg = True
-                    min_d_bad = min(min_d_bad, float(np.min(batch_scores[neg_mask])))
+                    neg_scores.extend(batch_scores[neg_mask].reshape(-1).tolist())
 
         if n_generated_valid_negative > 0:
             labels_array = np.asarray(labels)
@@ -847,18 +854,23 @@ class KBGAN():
                         ).detach().cpu().numpy()
 
                         if gen_bad_scores.size > 0:
-                            has_neg = True
-                            min_d_bad = min(min_d_bad, float(np.min(gen_bad_scores)))
+                            neg_scores.extend(gen_bad_scores.reshape(-1).tolist())
             else:
                 logging.warning(
                     "Generator validation negatives not added: validation labels contain no positive samples."
                 )
 
-        if not has_pos or not has_neg:
+        if len(pos_scores) == 0 or len(neg_scores) == 0:
             logging.warning("Validation threshold midpoint not updated: validation labels must contain both positive and negative samples.")
             return None
 
-        return (max_d_good + min_d_bad) / 2.0
+        pos_stat = float(np.percentile(np.asarray(pos_scores), true_percentile))
+        neg_stat = float(np.percentile(np.asarray(neg_scores), fake_percentile))
+        logging.info(
+            f"Validation percentile midpoint stats: true_p{true_percentile:.1f}={pos_stat:.6f}, "
+            f"fake_p{fake_percentile:.1f}={neg_stat:.6f}."
+        )
+        return (pos_stat + neg_stat) / 2.0
 
     def evaluate_on_link_prediction(self, heads: torch.Tensor, tails: torch.Tensor, test_data: tuple,
                                     filt: bool=True, k_list: list=[1, 3, 10]) -> dict:

@@ -8,9 +8,16 @@ KBGAN:
   early_stop_patience: -1
   temperature: 1.0
   n_sample: 20
+  negative_sampling_strategy: topk
+  n_candidate: 10
   n_epoch: 200
   n_batch: 10
   epoch_per_test: 10
+  n_generated_valid_negative: 3
+  join_loss_method: adaptive_norm
+  loss_ema_beta: 0.98
+  class_rank_balance_start: 0.2
+  class_rank_balance_warmup_epochs: 5
 TransE:
   optimizer: Adagrad
   learning_rate: 0.01

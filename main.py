@@ -15,10 +15,12 @@ RANK_FILT = True                            # Whether to apply filtering in rank
 RANK_K_LIST = [1, 3, 10]                    # Default k values for ranking metrics
 CLASS_OPTIMIZING_METRIC = 'accuracy'        # Metric to optimize for triple classification (e.g., 'accuracy', 'f1', etc.)
 CLASS_USE_MAXGOOD_MINBAD_THRESHOLD = True   # Whether to use dynamic threshold based on max_d_good and min_d_bad for classification
+CLASS_TRUE_PERCENTILE = 95.0
+CLASS_FAKE_PERCENTILE = 5.0
 
 def main():
-    #config_path = './config/config_' + DATASET + '.yaml'
-    config_path = './config/config_' + DATASET + '_test.yaml' # Use the test config with smaller epochs for quick testing
+    config_path = './config/config_' + DATASET + '.yaml'
+    # config_path = './config/config_' + DATASET + '_test.yaml' # Use the test config with smaller epochs for quick testing
 
     _config = config(config_path)
     working_task = _config.task # link-prediction / triple-classification / all (all for 'full-train' mode)
@@ -49,12 +51,11 @@ def main():
     n_epoch = _config['KBGAN']['n_epoch']
     n_batch = _config['KBGAN']['n_batch']
     epoch_per_test = _config['KBGAN']['epoch_per_test']
-    kbg_cfg = _config['KBGAN']
-    n_generated_valid_negative = kbg_cfg.get('n_generated_valid_negative', 5)
-    join_loss_method = kbg_cfg.get('join_loss_method', 'adaptive_norm')
-    loss_ema_beta = kbg_cfg.get('loss_ema_beta', 0.98)
-    class_rank_balance_start = kbg_cfg.get('class_rank_balance_start', 0.2)
-    class_rank_balance_warmup_epochs = kbg_cfg.get('class_rank_balance_warmup_epochs', 10)
+    n_generated_valid_negative = _config['KBGAN'].get('n_generated_valid_negative', 5)
+    join_loss_method = _config['KBGAN'].get('join_loss_method', 'adaptive_norm')
+    loss_ema_beta = _config['KBGAN'].get('loss_ema_beta', 0.98)
+    class_rank_balance_start = _config['KBGAN'].get('class_rank_balance_start', 0.2)
+    class_rank_balance_warmup_epochs = _config['KBGAN'].get('class_rank_balance_warmup_epochs', 10)
 
     # Assign or construct pretrained components' paths for 'gan-train' mode
     pretrained_dis_path = os.path.join('.', 'models', DATASET, working_task, 'components', dis_type + '.mdl')
@@ -150,6 +151,7 @@ def main():
                                     rank_optimizing_metric=RANK_OPTIMIZING_METRIC, rank_filt=RANK_FILT, rank_k_list=RANK_K_LIST,
                                     class_optimizing_metric=CLASS_OPTIMIZING_METRIC, class_use_maxgood_minbad_threshold=CLASS_USE_MAXGOOD_MINBAD_THRESHOLD,
                                     n_generated_valid_negative=n_generated_valid_negative,
+                                    class_true_percentile=CLASS_TRUE_PERCENTILE, class_fake_percentile=CLASS_FAKE_PERCENTILE,
                                     class_rank_balance_start=class_rank_balance_start,
                                     class_rank_balance_warmup_epochs=class_rank_balance_warmup_epochs,
                                     negative_sampling_strategy=negative_sampling_strategy,
@@ -194,6 +196,7 @@ def main():
                                     rank_optimizing_metric=RANK_OPTIMIZING_METRIC, rank_filt=RANK_FILT, rank_k_list=RANK_K_LIST,
                                     class_optimizing_metric=CLASS_OPTIMIZING_METRIC, class_use_maxgood_minbad_threshold=CLASS_USE_MAXGOOD_MINBAD_THRESHOLD,
                                     n_generated_valid_negative=n_generated_valid_negative,
+                                    class_true_percentile=CLASS_TRUE_PERCENTILE, class_fake_percentile=CLASS_FAKE_PERCENTILE,
                                     class_rank_balance_start=class_rank_balance_start,
                                     class_rank_balance_warmup_epochs=class_rank_balance_warmup_epochs,
                                     negative_sampling_strategy=negative_sampling_strategy,
