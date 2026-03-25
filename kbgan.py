@@ -265,8 +265,12 @@ class Component():
             ranking_metrics[f'hit@{k_list[i]}'] = hits_rate[i]
         
         # Format metrics for cleaner output
-        ranking_metrics_display = {k: f"{v:.4f}" if isinstance(v, float) else v for k, v in ranking_metrics.items()}
-        ranking_metrics_str = f"Ranking metrics: {ranking_metrics_display}\n"
+        parts = []
+        label_map = {'mr': 'MR', 'mrr': 'MRR'}
+        for k, v in ranking_metrics.items():
+            label = label_map.get(k, k.replace('hit@', 'Hit@'))
+            parts.append(f"{label}: {v:.4f}")
+        ranking_metrics_str = f"Ranking metrics: {', '.join(parts)}\n"
         logging.info(ranking_metrics_str)
         return ranking_metrics
     
@@ -382,8 +386,12 @@ class Component():
 
         classification_metrics = metrics.classification_metrics(predictions, true_labels, scores=scores_for_auc)
         # Format metrics for cleaner output
-        classification_metrics_display = {k: f"{v:.4f}" if isinstance(v, float) else v for k, v in classification_metrics.items()}
-        classification_metrics_str = f"Classification metrics: {classification_metrics_display}\n"
+        parts = []
+        label_map = {'accuracy': 'Accuracy', 'precision': 'Precision', 'recall': 'Recall', 'f1': 'F1', 'pr_auc': 'PR AUC', 'roc_auc': 'ROC AUC'}
+        for k, v in classification_metrics.items():
+            label = label_map.get(k, k)
+            parts.append(f"{label}: {v:.4f}")
+        classification_metrics_str = f"Classification metrics: {', '.join(parts)}\n"
 
         threshold_source = None
         if external_threshold is not None:
@@ -479,6 +487,7 @@ class KBGAN():
                 rank_optimizing_metric: str='mrr', rank_filt: bool=True, rank_k_list: list=[1, 3, 10],
                 class_optimizing_metric: str='accuracy', class_use_maxgood_minbad_threshold: bool=True,
                 class_true_percentile: float=95.0, class_fake_percentile: float=5.0,
+                class_true_fake_balance: float=0.33,
                 class_rank_balance_start: float=None, class_rank_balance_warmup_epochs: int=0,
                 negative_sampling_strategy: str='multinomial',
                 join_loss_method: str='adaptive_weight', loss_ema_beta: float=0.98) -> float:
@@ -703,6 +712,7 @@ class KBGAN():
                             temperature=temperature,
                             true_percentile=class_true_percentile,
                             fake_percentile=class_fake_percentile,
+                            true_fake_balance=class_true_fake_balance
                         )
 
                         if class_threshold is not None:
@@ -751,10 +761,9 @@ class KBGAN():
         return best_perf
 
     def _compute_midpoint_threshold_from_labeled_data(self, data_w_label: tuple,
-                                                      n_generated_valid_negative: int=0,
-                                                      temperature: float=1.0,
-                                                      true_percentile: float=95.0,
-                                                      fake_percentile: float=5.0) -> float:
+                                                    n_generated_valid_negative: int=0, temperature: float=1.0,
+                                                    true_percentile: float=95.0, fake_percentile: float=5.0,
+                                                    true_fake_balance: float=0.33) -> float:
         """
         Compute midpoint threshold from labeled triples (and optional generator negatives)
         using percentile statistics:
@@ -864,13 +873,14 @@ class KBGAN():
             logging.warning("Validation threshold midpoint not updated: validation labels must contain both positive and negative samples.")
             return None
 
-        pos_stat = float(np.percentile(np.asarray(pos_scores), true_percentile))
-        neg_stat = float(np.percentile(np.asarray(neg_scores), fake_percentile))
+        true_stat = float(np.percentile(np.asarray(pos_scores), true_percentile))
+        fake_stat = float(np.percentile(np.asarray(neg_scores), fake_percentile))
         logging.info(
-            f"Validation percentile midpoint stats: true_p{true_percentile:.1f}={pos_stat:.6f}, "
-            f"fake_p{fake_percentile:.1f}={neg_stat:.6f}."
+            f"Validation percentile midpoint stats:\n"
+            f"\ttrue_p{true_percentile:.1f}={true_stat:.6f}\n"
+            f"\tfake_p{fake_percentile:.1f}={true_stat:.6f}"
         )
-        return (pos_stat + neg_stat) / 2.0
+        return true_fake_balance * true_stat + (1 - true_fake_balance) * fake_stat
 
     def evaluate_on_link_prediction(self, heads: torch.Tensor, tails: torch.Tensor, test_data: tuple,
                                     filt: bool=True, k_list: list=[1, 3, 10]) -> dict:

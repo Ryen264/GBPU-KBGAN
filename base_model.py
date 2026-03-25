@@ -216,6 +216,12 @@ class BaseModel(object):
         for i in range(len(k_list)):
             metrics[f'hit@{k_list[i]}'] = hits_rate[i]
 
-        metrics_str = f"Ranking metrics: {metrics}\n"
+        # Format metrics for cleaner output
+        parts = []
+        label_map = {'mr': 'MR', 'mrr': 'MRR'}
+        for k, v in metrics.items():
+            label = label_map.get(k, k.replace('hit@', 'Hit@'))
+            parts.append(f"{label}: {v:.4f}")
+        metrics_str = f"Ranking metrics: {', '.join(parts)}\n"
         logging.info(metrics_str)
         return metrics

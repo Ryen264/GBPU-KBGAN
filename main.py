@@ -17,6 +17,7 @@ CLASS_OPTIMIZING_METRIC = 'accuracy'        # Metric to optimize for triple clas
 CLASS_USE_MAXGOOD_MINBAD_THRESHOLD = True   # Whether to use dynamic threshold based on max_d_good and min_d_bad for classification
 CLASS_TRUE_PERCENTILE = 95.0
 CLASS_FAKE_PERCENTILE = 5.0
+CLASS_TRUE_FAKE_BALANCE = 0.33
 
 def main():
     config_path = './config/config_' + DATASET + '.yaml'
@@ -138,12 +139,13 @@ def main():
 
         # Train KBGAN
         print(f"Training KBGAN with paramenters:\n\tclass_rank_balance={class_rank_balance}\n\tearly_stop_patience={early_stop_patience}\n"
-            + f"\ttemperature={temperature}\n\tn_sample={n_sample}\n\tn_candidate={n_candidate}\n\tnegative_sampling_strategy={negative_sampling_strategy}\n"
-            + f"\tn_epoch={n_epoch}\n\tn_batch={n_batch}\n\tepoch_per_test={epoch_per_test}\n"
-            + f"\trank_optimizing_metric={RANK_OPTIMIZING_METRIC}\n\trank_filt={RANK_FILT}\n\trank_k_list={RANK_K_LIST}\n"
-            + f"\tclass_optimizing_metric={CLASS_OPTIMIZING_METRIC}\n\tclass_use_maxgood_minbad_threshold={CLASS_USE_MAXGOOD_MINBAD_THRESHOLD}\n"
-            + f"\tn_generated_valid_negative={n_generated_valid_negative}\n\tjoin_loss_method={join_loss_method}\n\tloss_ema_beta={loss_ema_beta}\n"
-            + f"\tclass_rank_balance_start={class_rank_balance_start}\n\tclass_rank_balance_warmup_epochs={class_rank_balance_warmup_epochs}")
+            f"\ttemperature={temperature}\n\tn_sample={n_sample}\n\tn_candidate={n_candidate}\n\tnegative_sampling_strategy={negative_sampling_strategy}\n"
+            f"\tn_epoch={n_epoch}\n\tn_batch={n_batch}\n\tepoch_per_test={epoch_per_test}\n"
+            f"\trank_optimizing_metric={RANK_OPTIMIZING_METRIC}\n\trank_filt={RANK_FILT}\n\trank_k_list={RANK_K_LIST}\n"
+            f"\tclass_optimizing_metric={CLASS_OPTIMIZING_METRIC}\n\tclass_use_maxgood_minbad_threshold={CLASS_USE_MAXGOOD_MINBAD_THRESHOLD}\n"
+            f"\tclass_true_fake_balance={CLASS_TRUE_FAKE_BALANCE}\n"
+            f"\tn_generated_valid_negative={n_generated_valid_negative}\n\tjoin_loss_method={join_loss_method}\n\tloss_ema_beta={loss_ema_beta}\n"
+            f"\tclass_rank_balance_start={class_rank_balance_start}\n\tclass_rank_balance_warmup_epochs={class_rank_balance_warmup_epochs}")
         best_perf = model.train_kbgan(heads, tails, train_data, valid_data_with_labels,
                                     class_rank_balance=class_rank_balance, early_stop_patience=early_stop_patience,
                                     temperature=temperature, n_sample=n_sample, n_candidate=n_candidate,
@@ -152,6 +154,7 @@ def main():
                                     class_optimizing_metric=CLASS_OPTIMIZING_METRIC, class_use_maxgood_minbad_threshold=CLASS_USE_MAXGOOD_MINBAD_THRESHOLD,
                                     n_generated_valid_negative=n_generated_valid_negative,
                                     class_true_percentile=CLASS_TRUE_PERCENTILE, class_fake_percentile=CLASS_FAKE_PERCENTILE,
+                                    class_true_fake_balance=CLASS_TRUE_FAKE_BALANCE,
                                     class_rank_balance_start=class_rank_balance_start,
                                     class_rank_balance_warmup_epochs=class_rank_balance_warmup_epochs,
                                     negative_sampling_strategy=negative_sampling_strategy,
@@ -183,12 +186,13 @@ def main():
 
         # Train KBGAN
         print(f"Training KBGAN with paramenters:\n\tclass_rank_balance={class_rank_balance}\n\tearly_stop_patience={early_stop_patience}\n"
-            + f"\ttemperature={temperature}\n\tn_sample={n_sample}\n\tn_candidate={n_candidate}\n\tnegative_sampling_strategy={negative_sampling_strategy}\n"
-            + f"\tn_epoch={n_epoch}\n\tn_batch={n_batch}\n\tepoch_per_test={epoch_per_test}\n"
-            + f"\trank_optimizing_metric={RANK_OPTIMIZING_METRIC}\n\trank_filt={RANK_FILT}\n\trank_k_list={RANK_K_LIST}\n"
-            + f"\tclass_optimizing_metric={CLASS_OPTIMIZING_METRIC}\n\tclass_use_maxgood_minbad_threshold={CLASS_USE_MAXGOOD_MINBAD_THRESHOLD}\n"
-            + f"\tn_generated_valid_negative={n_generated_valid_negative}\n\tjoin_loss_method={join_loss_method}\n\tloss_ema_beta={loss_ema_beta}\n"
-            + f"\tclass_rank_balance_start={class_rank_balance_start}\n\tclass_rank_balance_warmup_epochs={class_rank_balance_warmup_epochs}")
+            f"\ttemperature={temperature}\n\tn_sample={n_sample}\n\tn_candidate={n_candidate}\n\tnegative_sampling_strategy={negative_sampling_strategy}\n"
+            f"\tn_epoch={n_epoch}\n\tn_batch={n_batch}\n\tepoch_per_test={epoch_per_test}\n"
+            f"\trank_optimizing_metric={RANK_OPTIMIZING_METRIC}\n\trank_filt={RANK_FILT}\n\trank_k_list={RANK_K_LIST}\n"
+            f"\tclass_optimizing_metric={CLASS_OPTIMIZING_METRIC}\n\tclass_use_maxgood_minbad_threshold={CLASS_USE_MAXGOOD_MINBAD_THRESHOLD}\n"
+            f"\tclass_true_fake_balance={CLASS_TRUE_FAKE_BALANCE}\n"
+            f"\tn_generated_valid_negative={n_generated_valid_negative}\n\tjoin_loss_method={join_loss_method}\n\tloss_ema_beta={loss_ema_beta}\n"
+            f"\tclass_rank_balance_start={class_rank_balance_start}\n\tclass_rank_balance_warmup_epochs={class_rank_balance_warmup_epochs}")
         best_perf = model.train_kbgan(heads, tails, train_data, valid_data_with_labels,
                                     class_rank_balance=class_rank_balance, early_stop_patience=early_stop_patience,
                                     temperature=temperature, n_sample=n_sample, n_candidate=n_candidate,
@@ -197,6 +201,7 @@ def main():
                                     class_optimizing_metric=CLASS_OPTIMIZING_METRIC, class_use_maxgood_minbad_threshold=CLASS_USE_MAXGOOD_MINBAD_THRESHOLD,
                                     n_generated_valid_negative=n_generated_valid_negative,
                                     class_true_percentile=CLASS_TRUE_PERCENTILE, class_fake_percentile=CLASS_FAKE_PERCENTILE,
+                                    class_true_fake_balance=CLASS_TRUE_FAKE_BALANCE,
                                     class_rank_balance_start=class_rank_balance_start,
                                     class_rank_balance_warmup_epochs=class_rank_balance_warmup_epochs,
                                     negative_sampling_strategy=negative_sampling_strategy,
