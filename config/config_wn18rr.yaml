@@ -13,7 +13,7 @@ KBGAN:
   n_epoch: 5000
   n_batch: 100
   epoch_per_test: 100
-  n_generated_valid_negative: 3
+  n_generated_valid_negative: 2
   join_loss_method: adaptive_norm
   loss_ema_beta: 0.98
   class_rank_balance_start: 0.2

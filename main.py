@@ -15,8 +15,8 @@ RANK_FILT = True                            # Whether to apply filtering in rank
 RANK_K_LIST = [1, 3, 10]                    # Default k values for ranking metrics
 CLASS_OPTIMIZING_METRIC = 'accuracy'        # Metric to optimize for triple classification (e.g., 'accuracy', 'f1', etc.)
 CLASS_USE_MAXGOOD_MINBAD_THRESHOLD = True   # Whether to use dynamic threshold based on max_d_good and min_d_bad for classification
-CLASS_TRUE_PERCENTILE = 90.0
-CLASS_FAKE_PERCENTILE = 5.0
+CLASS_TRUE_PERCENTILE = 95.0
+CLASS_FAKE_PERCENTILE = 2.5
 CLASS_TRUE_FAKE_BALANCE = 0.5
 
 def main():
