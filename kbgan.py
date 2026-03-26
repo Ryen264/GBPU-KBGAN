@@ -6,6 +6,7 @@ from torch.autograd import Variable
 from torch.optim import Adam, SGD, AdamW, RMSprop, Adagrad
 from typing import Generator, Tuple
 import numpy as np
+from datetime import datetime
 
 from datasets import batch_by_num, batch_by_size, convert_data_to_no_label, BernCorrupterMulti, BernCorrupter
 from models import TransE, TransD, DistMult, ComplEx
@@ -15,6 +16,63 @@ import metrics
 EPSILON = 1e-30
 FILTER_RANKING_PENALTY = 1e30
 OPTIMIZER_MAP = {'Adam': Adam, 'SGD': SGD, 'AdamW': AdamW, 'RMSprop': RMSprop, 'Adagrad': Adagrad}
+
+def _safe_stats(name: str, values: list) -> dict:
+    """Return robust distribution stats for a list of float scores."""
+    if len(values) == 0:
+        return {
+            "name": name,
+            "n_sample": 0,
+            "min": None,
+            "max": None,
+            "mean": None,
+            "median": None,
+            "std": None,
+            "percentiles": {}
+        }
+
+    arr = np.asarray(values, dtype=np.float64)
+    percentile_points = [1, 5, 10, 25, 50, 75, 90, 95, 99]
+
+    return {
+        "name": name,
+        "n_sample": int(arr.size),
+        "min": float(np.min(arr)),
+        "max": float(np.max(arr)),
+        "mean": float(np.mean(arr)),
+        "median": float(np.median(arr)),
+        "std": float(np.std(arr)),
+        "percentiles": {p: float(np.percentile(arr, p)) for p in percentile_points},
+    }
+
+def _format_stats_block(stats: dict) -> str:
+    if stats["n_sample"] == 0:
+        return (
+            f"[{stats['name']}]\n"
+            f"n_sample: 0\n"
+            f"min: N/A\nmax: N/A\nmean: N/A\nmedian: N/A\nstd: N/A\n"
+            f"percentiles: N/A\n"
+        )
+
+    p = stats["percentiles"]
+    return (
+        f"[{stats['name']}]\n"
+        f"n_sample: {stats['n_sample']}\n"
+        f"min: {stats['min']:.6f}\n"
+        f"max: {stats['max']:.6f}\n"
+        f"mean: {stats['mean']:.6f}\n"
+        f"median: {stats['median']:.6f}\n"
+        f"std: {stats['std']:.6f}\n"
+        f"p1: {p[1]:.6f}\n"
+        f"p5: {p[5]:.6f}\n"
+        f"p10: {p[10]:.6f}\n"
+        f"p25: {p[25]:.6f}\n"
+        f"p50: {p[50]:.6f}\n"
+        f"p75: {p[75]:.6f}\n"
+        f"p90: {p[90]:.6f}\n"
+        f"p95: {p[95]:.6f}\n"
+        f"p99: {p[99]:.6f}\n"
+    )
 
 class Component():
     def __init__(self, role: str, model_type: str, n_entity: int, n_relation: int):
@@ -873,14 +931,63 @@ class KBGAN():
             logging.warning("Validation threshold midpoint not updated: validation labels must contain both positive and negative samples.")
             return None
 
+        # Statistic analysis of scores
+        pos_stats = _safe_stats("POS_SCORE", pos_scores)
+        neg_stats = _safe_stats("NEG_SCORE", neg_scores)
+
+        analysis_path = "valid_score_analysis.txt"
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # Overwrite mode: keep only the latest validation analysis
+        with open(analysis_path, "w", encoding="utf-8") as f:
+            f.write("VALID SCORE ANALYSIS (LATEST)\n")
+            f.write(f"valid_time: {timestamp}\n\n")
+
+            def _write_stats(name: str, stats: dict) -> None:
+                f.write(f"{name}\n")
+                f.write(f"  n_sample: {stats['n_sample']}\n")
+                if stats["n_sample"] == 0:
+                    f.write("  min: N/A\n  max: N/A\n  mean: N/A\n  median: N/A\n  std: N/A\n")
+                    f.write("  p1/p5/p10/p25/p50/p75/p90/p95/p99: N/A\n\n")
+                    return
+
+                p = stats["percentiles"]
+                f.write(f"  min: {stats['min']:.6f}\n")
+                f.write(f"  max: {stats['max']:.6f}\n")
+                f.write(f"  mean: {stats['mean']:.6f}\n")
+                f.write(f"  median: {stats['median']:.6f}\n")
+                f.write(f"  std: {stats['std']:.6f}\n")
+                f.write(
+                    "  percentiles: "
+                    f"p1={p[1]:.6f}, p5={p[5]:.6f}, p10={p[10]:.6f}, "
+                    f"p25={p[25]:.6f}, p50={p[50]:.6f}, p75={p[75]:.6f}, "
+                    f"p90={p[90]:.6f}, p95={p[95]:.6f}, p99={p[99]:.6f}\n\n"
+                )
+
+            _write_stats("POS_SCORE", pos_stats)
+            _write_stats("NEG_SCORE", neg_stats)
+
+            if pos_stats["n_sample"] > 0 and neg_stats["n_sample"] > 0:
+                f.write("SEPARABILITY_HINT\n")
+                f.write(
+                    f"  pos_p95_minus_neg_p5: "
+                    f"{(pos_stats['percentiles'][95] - neg_stats['percentiles'][5]):.6f}\n"
+                )
+                f.write(
+                    f"  pos_mean_minus_neg_mean: "
+                    f"{(pos_stats['mean'] - neg_stats['mean']):.6f}\n"
+                )
+        logging.info(f"Wrote latest validation score analysis to {analysis_path}")
+
         true_stat = float(np.percentile(np.asarray(pos_scores), true_percentile))
-        fake_stat = float(np.percentile(np.asarray(neg_scores), fake_percentile))
+        fake_stat = float(np.percentile(np.asarray(neg_scores), fake_percentile))        
         logging.info(
             f"Validation percentile midpoint stats:\n"
             f"\ttrue_p{true_percentile:.1f}={true_stat:.6f}\n"
-            f"\tfake_p{fake_percentile:.1f}={true_stat:.6f}"
+            f"\tfake_p{fake_percentile:.1f}={fake_stat:.6f}"
         )
-        return true_fake_balance * true_stat + (1 - true_fake_balance) * fake_stat
+        balanced_midpoint = true_fake_balance * true_stat + (1 - true_fake_balance) * fake_stat
+        return balanced_midpoint
 
     def evaluate_on_link_prediction(self, heads: torch.Tensor, tails: torch.Tensor, test_data: tuple,
                                     filt: bool=True, k_list: list=[1, 3, 10]) -> dict:
