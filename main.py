@@ -15,21 +15,21 @@ RANK_FILT = True                            # Whether to apply filtering in rank
 RANK_K_LIST = [1, 3, 10]                    # Default k values for ranking metrics
 CLASS_OPTIMIZING_METRIC = 'accuracy'        # Metric to optimize for triple classification (e.g., 'accuracy', 'f1', etc.)
 CLASS_USE_MAXGOOD_MINBAD_THRESHOLD = True   # Whether to use dynamic threshold based on max_d_good and min_d_bad for classification
-CLASS_TRUE_PERCENTILE = 95.0
-CLASS_FAKE_PERCENTILE = 2.5
+CLASS_TRUE_PERCENTILE = 90.0
+CLASS_FAKE_PERCENTILE = 5.0
 CLASS_TRUE_FAKE_BALANCE = 0.5
 
 def main():
-    config_path = './config/config_' + DATASET + '.yaml'
+    config_path = './config/config_' + DATASET + '_baseline.yaml'
     # config_path = './config/config_' + DATASET + '_test.yaml' # Use the test config with smaller epochs for quick testing
 
     _config = config(config_path)
     working_task = _config.task # link-prediction / triple-classification / all (all for 'full-train' mode)
 
     global MODE
-    if len(sys.argv) > 1:
-        MODE = sys.argv[1].split('=')[1]
-    args = sys.argv[2:]
+    if len(sys.argv) > 2:
+        MODE = sys.argv[2].split('=')[1]
+        args = sys.argv[3:]
     if args:
         overwrite_config_with_args(args)
         print("Running config: ", _config)
