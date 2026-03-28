@@ -27,9 +27,9 @@ def main():
     working_task = _config.task # link-prediction / triple-classification / all (all for 'full-train' mode)
 
     global MODE
-    if len(sys.argv) > 2:
-        MODE = sys.argv[2].split('=')[1]
-        args = sys.argv[3:]
+    if len(sys.argv) > 1:
+        MODE = sys.argv[1].split('=')[1]
+    args = sys.argv[2:]
     if args:
         overwrite_config_with_args(args)
         print("Running config: ", _config)
