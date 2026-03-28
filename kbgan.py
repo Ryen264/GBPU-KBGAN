@@ -136,6 +136,10 @@ class Component():
         head_var, relation_var, tail_var = Variable(head.to(config.device)), Variable(relation.to(config.device)), Variable(tail.to(config.device))
         return self.model.score(head_var, relation_var, tail_var)
 
+    def dist(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
+        head_var, relation_var, tail_var = Variable(head.to(config.device)), Variable(relation.to(config.device)), Variable(tail.to(config.device))
+        return self.model.dist(head_var, relation_var, tail_var)
+
     def train(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data_w_label: tuple,
             class_rank_balance: float = 1.0, early_stop_patience: int=-1,
             rank_optimizing_metric: str='mrr', rank_filt: bool=True, rank_k_list: list=[1, 3, 10],
@@ -848,17 +852,18 @@ class KBGAN():
                 relation_var = torch.LongTensor(batch_relation).to(config.device)
                 tail_var = torch.LongTensor(batch_tail).to(config.device)
 
-                batch_scores = self.discriminator.score(head_var, relation_var, tail_var).detach().cpu().numpy()
+                # batch_scores = self.discriminator.score(head_var, relation_var, tail_var).detach().cpu().numpy()
+                batch_dists = self.discriminator.dist(head_var, relation_var, tail_var).detach().cpu().numpy()
                 batch_labels = np.asarray(batch_label)
 
                 pos_mask = (batch_labels == 1)
                 neg_mask = (batch_labels == 0)
 
                 if np.any(pos_mask):
-                    pos_scores.extend(batch_scores[pos_mask].reshape(-1).tolist())
+                    pos_scores.extend(batch_dists[pos_mask].reshape(-1).tolist())
 
                 if np.any(neg_mask):
-                    neg_scores.extend(batch_scores[neg_mask].reshape(-1).tolist())
+                    neg_scores.extend(batch_dists[neg_mask].reshape(-1).tolist())
 
         if n_generated_valid_negative > 0:
             labels_array = np.asarray(labels)

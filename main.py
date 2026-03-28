@@ -20,7 +20,7 @@ CLASS_FAKE_PERCENTILE = 5.0
 CLASS_TRUE_FAKE_BALANCE = 0.5
 
 def main():
-    config_path = './config/config_' + DATASET + '_baseline.yaml'
+    config_path = './config/config_' + DATASET + '.yaml'
     # config_path = './config/config_' + DATASET + '_test.yaml' # Use the test config with smaller epochs for quick testing
 
     _config = config(config_path)
