@@ -971,21 +971,12 @@ class KBGAN():
 
             _write_stats("POS_SCORE", pos_stats)
             _write_stats("NEG_SCORE", neg_stats)
-
-            if pos_stats["n_sample"] > 0 and neg_stats["n_sample"] > 0:
-                f.write("SEPARABILITY_HINT\n")
-                f.write(
-                    f"  pos_p95_minus_neg_p5: "
-                    f"{(pos_stats['percentiles'][95] - neg_stats['percentiles'][5]):.6f}\n"
-                )
-                f.write(
-                    f"  pos_mean_minus_neg_mean: "
-                    f"{(pos_stats['mean'] - neg_stats['mean']):.6f}\n"
-                )
         logging.info(f"Wrote latest validation score analysis to {analysis_path}")
 
-        true_stat = float(np.percentile(np.asarray(pos_scores), true_percentile))
-        fake_stat = float(np.percentile(np.asarray(neg_scores), fake_percentile))        
+        # true_stat = float(np.percentile(np.asarray(pos_scores), true_percentile))
+        true_stat = pos_stats['mean'] + pos_stats['std']
+        # fake_stat = float(np.percentile(np.asarray(neg_scores), fake_percentile))   
+        fake_stat = neg_stats['mean'] - neg_stats['std']
         logging.info(
             f"Validation percentile midpoint stats:\n"
             f"\ttrue_p{true_percentile:.1f}={true_stat:.6f}\n"
