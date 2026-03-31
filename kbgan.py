@@ -661,10 +661,13 @@ class KBGAN():
         pos_stats = _safe_stats("POS_SCORE", pos_scores)
         neg_stats = _safe_stats("NEG_SCORE", neg_scores)
 
-        analysis_path = "valid_score_analysis.txt"
+        analysis_dir = os.path.join('.', 'logs', config._config.dataset, config._config.task)
+        os.makedirs(analysis_dir, exist_ok=True)
+        analysis_filename = config.build_timestamped_filename("valid_score_analysis", ".txt")
+        analysis_path = os.path.join(analysis_dir, analysis_filename)
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        # Overwrite mode: keep only the latest validation analysis
+        # Write one analysis file per validation snapshot.
         with open(analysis_path, "w", encoding="utf-8") as f:
             f.write("VALID SCORE ANALYSIS (LATEST)\n")
             f.write(f"valid_time: {timestamp}\n\n")

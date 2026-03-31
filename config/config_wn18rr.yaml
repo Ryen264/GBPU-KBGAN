@@ -18,7 +18,7 @@ KBGAN:
   emb_uniform_p: 0.5
   emb_uniform_scale: 2.0
   emb_align_op: 'add'
-  score_sep_weight: 0.0
+  score_sep_weight: 1.0
 TransE:
   optimizer: Adagrad
   learning_rate: 0.01

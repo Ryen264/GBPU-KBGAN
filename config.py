@@ -140,6 +140,15 @@ def set_device(gpu_id: int) -> torch.device:
         logging.info("No GPU available. Running on CPU.")
         return device
 
+
+def build_timestamped_filename(prefix: str, ext: str) -> str:
+    """Build filename as <prefix>_yymmdd-hhmmss<ext>."""
+    ts = time.strftime("%y%m%d-%H%M%S")
+    normalized_prefix = (prefix or "").rstrip("_")
+    if not normalized_prefix:
+        normalized_prefix = "training"
+    return f"{normalized_prefix}_{ts}{ext}"
+
 def logger_init() -> None:
     root_logger = logging.getLogger()
     root_logger.handlers.clear()
@@ -152,7 +161,8 @@ def logger_init() -> None:
     if (_config.log.to_file):
         log_dir = os.path.join('.', 'logs', _config.dataset, _config.task)
         os.makedirs(log_dir, exist_ok=True)
-        log_filename = os.path.join(log_dir, _config.log.prefix + time.strftime("%m%d%H%M%S") + ".log")
+        log_basename = build_timestamped_filename(_config.log.prefix, ".log")
+        log_filename = os.path.join(log_dir, log_basename)
         file_handler = logging.FileHandler(log_filename)
         file_handler.setFormatter(logging.Formatter('%(module)15s %(asctime)s %(message)s', datefmt='%H:%M:%S'))
         root_logger.addHandler(file_handler)
