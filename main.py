@@ -20,16 +20,36 @@ CLASS_FAKE_PERCENTILE = 5.0
 CLASS_TRUE_FAKE_BALANCE = 0.5
 
 def main():
-    config_path = './config/config_' + DATASET + '.yaml'
-    # config_path = './config/config_' + DATASET + '_test.yaml' # Use the test config with smaller epochs for quick testing
-
+    # Check if config path is provided as first argument
+    global MODE
+    config_path = None
+    args_start_index = 1
+    
+    if len(sys.argv) > 1:
+        first_arg = sys.argv[1]
+        # If first argument looks like a config file path (contains .yaml), use it
+        if first_arg.endswith('.yaml'):
+            config_path = first_arg
+            args_start_index = 2
+    
+    # Use provided config path or fall back to default
+    if config_path is None:
+        config_path = './config/config_' + DATASET + '.yaml'
+    
     _config = config(config_path)
     working_task = _config.task # link-prediction / triple-classification / all (all for 'full-train' mode)
 
-    global MODE
-    if len(sys.argv) > 1:
-        MODE = sys.argv[1].split('=')[1]
-    args = sys.argv[2:]
+    # Parse remaining arguments for mode and config overrides
+    if len(sys.argv) > args_start_index:
+        first_remaining = sys.argv[args_start_index]
+        # Check if it's a mode specification (mode=...)
+        if '=' in first_remaining and first_remaining.startswith('mode='):
+            MODE = first_remaining.split('=')[1]
+            args = sys.argv[args_start_index + 1:]
+        else:
+            args = sys.argv[args_start_index:]
+    else:
+        args = []
     if args:
         overwrite_config_with_args(args)
         print("Running config: ", _config)
@@ -53,10 +73,11 @@ def main():
     n_batch = _config['KBGAN']['n_batch']
     epoch_per_test = _config['KBGAN']['epoch_per_test']
     n_generated_valid_negative = _config['KBGAN'].get('n_generated_valid_negative', 5)
-    join_loss_method = _config['KBGAN'].get('join_loss_method', 'adaptive_norm')
-    loss_ema_beta = _config['KBGAN'].get('loss_ema_beta', 0.98)
-    class_rank_balance_start = _config['KBGAN'].get('class_rank_balance_start', 0.2)
-    class_rank_balance_warmup_epochs = _config['KBGAN'].get('class_rank_balance_warmup_epochs', 10)
+    score_sep_weight = _config['KBGAN'].get('score_sep_weight', 1.0)
+    emb_loss_gamma = _config['KBGAN'].get('emb_loss_gamma', 1.0)
+    emb_uniform_p = _config['KBGAN'].get('emb_uniform_p', 0.5)
+    emb_uniform_scale = _config['KBGAN'].get('emb_uniform_scale', 2.0)
+    emb_align_op = _config['KBGAN'].get('emb_align_op', 'add')
 
     # Assign or construct pretrained components' paths for 'gan-train' mode
     pretrained_dis_path = os.path.join('.', 'models', DATASET, working_task, 'components', dis_type + '.mdl')
@@ -144,21 +165,33 @@ def main():
             f"\trank_optimizing_metric={RANK_OPTIMIZING_METRIC}\n\trank_filt={RANK_FILT}\n\trank_k_list={RANK_K_LIST}\n"
             f"\tclass_optimizing_metric={CLASS_OPTIMIZING_METRIC}\n\tclass_use_maxgood_minbad_threshold={CLASS_USE_MAXGOOD_MINBAD_THRESHOLD}\n"
             f"\tclass_true_fake_balance={CLASS_TRUE_FAKE_BALANCE}\n"
-            f"\tn_generated_valid_negative={n_generated_valid_negative}\n\tjoin_loss_method={join_loss_method}\n\tloss_ema_beta={loss_ema_beta}\n"
-            f"\tclass_rank_balance_start={class_rank_balance_start}\n\tclass_rank_balance_warmup_epochs={class_rank_balance_warmup_epochs}")
+            f"\tn_generated_valid_negative={n_generated_valid_negative}\n"
+            f"\temb_loss_gamma={emb_loss_gamma}\n\temb_uniform_p={emb_uniform_p}\n\temb_uniform_scale={emb_uniform_scale}\n\temb_align_op={emb_align_op}\n\tscore_sep_weight={score_sep_weight}")
         best_perf = model.train_kbgan(heads, tails, train_data, valid_data_with_labels,
-                                    class_rank_balance=class_rank_balance, early_stop_patience=early_stop_patience,
-                                    temperature=temperature, n_sample=n_sample, n_candidate=n_candidate,
-                                    n_epoch=n_epoch, n_batch=n_batch, epoch_per_test=epoch_per_test,
-                                    rank_optimizing_metric=RANK_OPTIMIZING_METRIC, rank_filt=RANK_FILT, rank_k_list=RANK_K_LIST,
-                                    class_optimizing_metric=CLASS_OPTIMIZING_METRIC, class_use_maxgood_minbad_threshold=CLASS_USE_MAXGOOD_MINBAD_THRESHOLD,
+                                    class_rank_balance=class_rank_balance,
+                                    early_stop_patience=early_stop_patience,
+                                    temperature=temperature,
+                                    n_sample=n_sample,
+                                    n_candidate=n_candidate,
+                                    n_epoch=n_epoch,
+                                    n_batch=n_batch,
+                                    epoch_per_test=epoch_per_test,
                                     n_generated_valid_negative=n_generated_valid_negative,
-                                    class_true_percentile=CLASS_TRUE_PERCENTILE, class_fake_percentile=CLASS_FAKE_PERCENTILE,
-                                    class_true_fake_balance=CLASS_TRUE_FAKE_BALANCE,
-                                    class_rank_balance_start=class_rank_balance_start,
-                                    class_rank_balance_warmup_epochs=class_rank_balance_warmup_epochs,
                                     negative_sampling_strategy=negative_sampling_strategy,
-                                    join_loss_method=join_loss_method, loss_ema_beta=loss_ema_beta)
+                                    emb_loss_gamma=emb_loss_gamma,
+                                    emb_uniform_p=emb_uniform_p,
+                                    emb_uniform_scale=emb_uniform_scale,
+                                    emb_align_op=emb_align_op,
+                                    score_sep_weight=score_sep_weight,
+                                    rank_optimizing_metric=RANK_OPTIMIZING_METRIC,
+                                    rank_filt=RANK_FILT,
+                                    rank_k_list=RANK_K_LIST,
+                                    class_optimizing_metric=CLASS_OPTIMIZING_METRIC,
+                                    class_use_maxgood_minbad_threshold=CLASS_USE_MAXGOOD_MINBAD_THRESHOLD,
+                                    class_true_percentile=CLASS_TRUE_PERCENTILE,
+                                    class_fake_percentile=CLASS_FAKE_PERCENTILE,
+                                    class_true_fake_balance=CLASS_TRUE_FAKE_BALANCE
+                                    )
         print(f"Best validation performance while training: {best_perf}")
         t_step = log_step("Train KBGAN", t_step)
         print("----------------")
@@ -191,21 +224,33 @@ def main():
             f"\trank_optimizing_metric={RANK_OPTIMIZING_METRIC}\n\trank_filt={RANK_FILT}\n\trank_k_list={RANK_K_LIST}\n"
             f"\tclass_optimizing_metric={CLASS_OPTIMIZING_METRIC}\n\tclass_use_maxgood_minbad_threshold={CLASS_USE_MAXGOOD_MINBAD_THRESHOLD}\n"
             f"\tclass_true_fake_balance={CLASS_TRUE_FAKE_BALANCE}\n"
-            f"\tn_generated_valid_negative={n_generated_valid_negative}\n\tjoin_loss_method={join_loss_method}\n\tloss_ema_beta={loss_ema_beta}\n"
-            f"\tclass_rank_balance_start={class_rank_balance_start}\n\tclass_rank_balance_warmup_epochs={class_rank_balance_warmup_epochs}")
+            f"\tn_generated_valid_negative={n_generated_valid_negative}\n"
+            f"\temb_loss_gamma={emb_loss_gamma}\n\temb_uniform_p={emb_uniform_p}\n\temb_uniform_scale={emb_uniform_scale}\n\temb_align_op={emb_align_op}\n\tscore_sep_weight={score_sep_weight}")
         best_perf = model.train_kbgan(heads, tails, train_data, valid_data_with_labels,
-                                    class_rank_balance=class_rank_balance, early_stop_patience=early_stop_patience,
-                                    temperature=temperature, n_sample=n_sample, n_candidate=n_candidate,
-                                    n_epoch=n_epoch, n_batch=n_batch, epoch_per_test=epoch_per_test,
-                                    rank_optimizing_metric=RANK_OPTIMIZING_METRIC, rank_filt=RANK_FILT, rank_k_list=RANK_K_LIST,
-                                    class_optimizing_metric=CLASS_OPTIMIZING_METRIC, class_use_maxgood_minbad_threshold=CLASS_USE_MAXGOOD_MINBAD_THRESHOLD,
+                                    class_rank_balance=class_rank_balance,
+                                    early_stop_patience=early_stop_patience,
+                                    temperature=temperature,
+                                    n_sample=n_sample,
+                                    n_candidate=n_candidate,
+                                    n_epoch=n_epoch,
+                                    n_batch=n_batch,
+                                    epoch_per_test=epoch_per_test,
                                     n_generated_valid_negative=n_generated_valid_negative,
-                                    class_true_percentile=CLASS_TRUE_PERCENTILE, class_fake_percentile=CLASS_FAKE_PERCENTILE,
-                                    class_true_fake_balance=CLASS_TRUE_FAKE_BALANCE,
-                                    class_rank_balance_start=class_rank_balance_start,
-                                    class_rank_balance_warmup_epochs=class_rank_balance_warmup_epochs,
                                     negative_sampling_strategy=negative_sampling_strategy,
-                                    join_loss_method=join_loss_method, loss_ema_beta=loss_ema_beta)
+                                    emb_loss_gamma=emb_loss_gamma,
+                                    emb_uniform_p=emb_uniform_p,
+                                    emb_uniform_scale=emb_uniform_scale,
+                                    emb_align_op=emb_align_op,
+                                    score_sep_weight=score_sep_weight,
+                                    rank_optimizing_metric=RANK_OPTIMIZING_METRIC,
+                                    rank_filt=RANK_FILT,
+                                    rank_k_list=RANK_K_LIST,
+                                    class_optimizing_metric=CLASS_OPTIMIZING_METRIC,
+                                    class_use_maxgood_minbad_threshold=CLASS_USE_MAXGOOD_MINBAD_THRESHOLD,
+                                    class_true_percentile=CLASS_TRUE_PERCENTILE,
+                                    class_fake_percentile=CLASS_FAKE_PERCENTILE,
+                                    class_true_fake_balance=CLASS_TRUE_FAKE_BALANCE
+                                    )
         print(f"Best validation performance while training: {best_perf}")
         t_step = log_step("Train KBGAN", t_step)
         print("----------------")

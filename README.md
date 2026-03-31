@@ -164,28 +164,36 @@ Run training directly in the current terminal:
 # Activate virtual environment first
 source .venv/bin/activate
 
-# Full training pipeline (pretrain + adversarial + evaluation)
+# Full training pipeline with default config (WN18RR)
+python main.py
+
+# Full training with specific config and dataset
+python main.py config/config_wn18rr.yaml
+python main.py config/config_wn18rr_test.yaml   # Quick test with fewer epochs
+python main.py config/config_fb15k237.yaml
+
+# Specify mode with config
+python main.py config/config_wn18rr.yaml mode=full-train
+python main.py config/config_wn18rr.yaml mode=gan-train
+python main.py config/config_wn18rr.yaml mode=test-only
+```
+
+**Backward compatible syntax (uses default DATASET variable):**
+```bash
+# Uses default dataset from DATASET variable in main.py
 python main.py mode=full-train
-
-# Only adversarial training (requires pretrained models)
 python main.py mode=gan-train
-
-# Only evaluation (requires trained model)
 python main.py mode=test-only
 ```
 
 **With config overrides:**
 ```bash
-python main.py mode=full-train \
+# Override specific hyperparameters
+python main.py config/config_wn18rr.yaml \
   --override TransE.n_epoch=500 \
   --override DistMult.n_epoch=500 \
   --override KBGAN.n_epoch=3000 \
   --override KBGAN.temperature=0.5
-```
-
-**Using different dataset:**
-```bash
-python main.py mode=full-train --config-file ./config/config_fb15k237.yaml
 ```
 
 ### Option 2: Background Execution with NOHUP
@@ -198,14 +206,16 @@ For long-running training sessions, use the provided shell scripts:
 # Make scripts executable (first time only)
 chmod +x run_process.sh check_process.sh stop_process.sh
 
-# Start training with default mode (full-train)
+# Start training with default config
 ./run_process.sh
 
-# Start with specific mode
-./run_process.sh gan-train
+# Start with specific config file
+./run_process.sh config/config_wn18rr.yaml mode=full-train
+./run_process.sh config/config_fb15k237.yaml mode=full-train
+./run_process.sh config/config_wn18rr_test.yaml mode=full-train
 
-# Start with config overrides
-./run_process.sh full-train "--override KBGAN.n_epoch=1000"
+# Start with config and optional overrides
+./run_process.sh config/config_wn18rr.yaml mode=full-train "--override KBGAN.n_epoch=1000"
 ```
 
 **What happens:**
