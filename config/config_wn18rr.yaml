@@ -17,7 +17,7 @@ KBGAN:
   emb_loss_gamma: 1.0
   emb_uniform_p: 0.5
   emb_uniform_scale: 2.0
-  emb_align_op: 'add'
+  emb_align_op: 'mul'
   score_sep_weight: 0.0
 TransE:
   optimizer: Adagrad
