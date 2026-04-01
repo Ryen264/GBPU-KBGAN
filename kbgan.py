@@ -1,7 +1,7 @@
 import os
 import logging
 import torch
-from typing import Generator, Tuple
+from typing import Tuple
 import numpy as np
 from datetime import datetime
 
@@ -9,12 +9,6 @@ from datasets import batch_by_num, batch_by_size, BernCorrupterMulti
 from component import Component
 import loss
 import config
-
-def _join_rank_class_metrics(rank_value: float, class_value: float, class_rank_balance: float) -> float:
-    """Blend rank and classification metric values using class_rank_balance in [0, 1]."""
-    if not (0.0 <= class_rank_balance <= 1.0):
-        raise ValueError("class_rank_balance must be in [0, 1].")
-    return (1.0 - class_rank_balance) * rank_value + class_rank_balance * class_value
 
 def _safe_stats(name: str, values: list) -> dict:
     """Return robust distribution stats for a list of float scores."""
@@ -168,33 +162,13 @@ class KBGAN():
 
         # [CLASS TASK]
         if do_class_task:
-            class_threshold = None
-            is_threshold_tunning = False
-            # [MAXGOOD MINBAD THRESHOLD]
-            if class_use_maxgood_minbad_threshold:
-                class_threshold = self._compute_midpoint_threshold_from_labeled_data(
-                    valid_data_w_label,
-                    n_generated_valid_negative=n_generated_valid_negative,
-                    temperature=temperature,
-                    true_percentile=class_true_percentile,
-                    fake_percentile=class_fake_percentile,
-                    true_fake_balance=class_true_fake_balance,
-                )
-                if class_threshold is not None:
-                    self.optimal_threshold = class_threshold
-                    logging.info(f"Using validation midpoint threshold: {class_threshold:.6f}")
-                else:
-                    # Fallback: tune threshold from validation metrics when midpoint cannot be computed.
-                    is_threshold_tunning = True
-                    logging.warning("Validation midpoint threshold unavailable. Falling back to threshold tuning on validation set.")
-            else:
-                # Default behavior when midpoint rule is disabled: tune threshold on validation set.
-                is_threshold_tunning = True
+            # Stage-2: always tune relation-specific thresholds on validation set,
+            # with global fallback handled by Component.evaluate_on_classification.
             class_metrics = self.discriminator.evaluate_on_classification(
                 valid_data_w_label,
                 optimizing_metric=class_optimizing_metric,
-                is_threshold_tunning=is_threshold_tunning,
-                external_threshold=class_threshold,
+                is_threshold_tunning=True,
+                external_threshold=None,
             )
             # [JOINT METRIC]
             test_perf = (1.0 - class_rank_balance) * rank_metrics[rank_optimizing_metric] \
@@ -221,6 +195,7 @@ class KBGAN():
                 negative_sampling_strategy: str='multinomial',
                 emb_uniform_p: float=0.5,
                 emb_uniform_scale: float=2.0,
+                entity_uniform_max_ids: int=2048,
                 true_align_gamma: float=1.0,
                 fake_align_gamma: float=1.0,
                 emb_align_op: str='add',
@@ -276,6 +251,8 @@ class KBGAN():
             raise ValueError("emb_align_op must be one of ['add', 'mul']")
         if not (0.0 <= emb_align_balance <= 1.0):
             raise ValueError("emb_align_balance must be in [0, 1]")
+        if entity_uniform_max_ids is not None and entity_uniform_max_ids < 2:
+            raise ValueError("entity_uniform_max_ids must be >= 2 or None")
 
         # [EARLY STOPPING]
         patience_counter = 0
@@ -303,19 +280,23 @@ class KBGAN():
 
                 # --- KBGAN Discriminator Step ---
                 h_device, r_device, t_device = h.to(config.device), r.to(config.device), t.to(config.device)
-                # Use only entities present in current batch triples to keep uniform loss memory-bounded.
+                # Batch-level uniformity over unique entities/relations in current mini-batch.
                 entity_ids_batch = torch.unique(torch.cat((h_device.reshape(-1), t_device.reshape(-1)), dim=0))
+                if entity_uniform_max_ids is not None and entity_ids_batch.numel() > entity_uniform_max_ids:
+                    sample_idx = torch.randperm(entity_ids_batch.numel(), device=entity_ids_batch.device)[:entity_uniform_max_ids]
+                    entity_ids_batch = entity_ids_batch[sample_idx]
+                relation_ids_batch = torch.unique(r_device.reshape(-1))
                 ent_uni_loss = loss.uniform_loss(
                     ids=entity_ids_batch,
                     emb=self.discriminator.embed,
                     scale=emb_uniform_scale,
                 )
                 rel_uni_loss = loss.uniform_loss(
-                    ids=r_device,
+                    ids=relation_ids_batch,
                     emb=self.discriminator.relation_embed,
                     scale=emb_uniform_scale
                 )
-                true_ali_loss = loss.align_loss(
+                true_dist_sq = loss.align_distance_sq(
                     head_ids=h_device,
                     relation_ids=r_device,
                     tail_ids=t_device,
@@ -330,7 +311,7 @@ class KBGAN():
                 else:
                     relation_for_fake = r_device
 
-                fake_ali_loss = loss.align_loss(
+                fake_dist_sq = loss.align_distance_sq(
                     head_ids=head_smpl_device,
                     relation_ids=relation_for_fake,
                     tail_ids=tail_smpl_device,
@@ -339,16 +320,20 @@ class KBGAN():
                     align_balance=emb_align_balance,
                     align_op=emb_align_op,
                 )
-                emb_loss = emb_uniform_p * ent_uni_loss \
-                            + (1.0 - emb_uniform_p) * rel_uni_loss \
-                            + true_align_gamma * true_ali_loss \
-                            - fake_align_gamma * fake_ali_loss
-                rewards_raw = -fake_align_gamma * fake_ali_loss
+
+                # DirectAU-style discriminator objective:
+                # true pull + fake push (exp decay) + batch uniformity.
+                uniform_loss_batch = emb_uniform_p * ent_uni_loss + (1.0 - emb_uniform_p) * rel_uni_loss
+                true_pull = true_align_gamma * true_dist_sq.mean()
+                fake_push = fake_align_gamma * torch.exp(-fake_dist_sq).mean()
+                emb_loss = uniform_loss_batch + true_pull + fake_push
+
+                # Generator reward: hard negatives are close to query => larger reward.
+                rewards_raw = -fake_dist_sq.detach()
 
                 reward_sum = float(torch.sum(rewards_raw).item())
                 rewards = rewards_raw - avg_reward
-                rewards_for_gen = rewards.unsqueeze(1) if rewards.dim() == 1 else rewards
-                gen_step.send(rewards_for_gen)
+                gen_step.send(rewards)
                 epoch_reward += reward_sum
 
                 # Optimizer Step
@@ -591,7 +576,8 @@ class KBGAN():
             test_data_w_label = [torch.LongTensor(vec) for vec in test_data_w_label]
             
         print("Evaluating KBGAN discriminator on Triple Classification...")
-        threshold = self.optimal_threshold if use_maxgood_minbad_threshold else None
+        # Stage-3: use relation-specific thresholds with global fallback learned in Stage-2.
+        threshold = None
         metrics = self.discriminator.evaluate_on_classification(test_data_w_label,
                                                                 optimizing_metric=optimizing_metric,
                                                                 is_threshold_tunning=False, external_threshold=threshold)

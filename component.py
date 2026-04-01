@@ -10,12 +10,12 @@ from torch.optim import Adam, SGD, AdamW, RMSprop, Adagrad
 import config
 import metrics
 from datasets import (
-    BernCorrupter,
-    BernCorrupterMulti,
+    batch_by_num,
     batch_by_size,
     convert_data_to_no_label,
 )
 from models import ComplEx, DistMult, TransD, TransE
+import loss
 
 FILTER_RANKING_PENALTY = 1e30
 OPTIMIZER_MAP = {
@@ -66,6 +66,8 @@ class Component:
         self.model_path = self.model.model_path
         self.classification_threshold = None
         self.best_threshold_perf = {}
+        self.relation_thresholds = {}
+        self.global_threshold = None
         print(
             f"Initialized component successfully: {self.model_type} model with role {self.role}, "
             f"n_entity={self.n_entity}, n_relation={self.n_relation}."
@@ -135,6 +137,28 @@ class Component:
             )
         raise AttributeError("Model does not expose supported relation embedding layers.")
 
+    def _directau_align_params(self) -> tuple[str, float]:
+        kbgan_cfg = config._config["KBGAN"]
+        align_op = kbgan_cfg.get("emb_align_op", "add")
+        align_balance = kbgan_cfg.get("emb_align_balance", 0.7)
+        if align_op not in ["add", "mul"]:
+            raise ValueError("emb_align_op must be one of ['add', 'mul']")
+        if not (0.0 <= align_balance <= 1.0):
+            raise ValueError("emb_align_balance must be in [0, 1]")
+        return align_op, align_balance
+
+    def _distance_score(self, head_ids: torch.Tensor, relation_ids: torch.Tensor, tail_ids: torch.Tensor) -> torch.Tensor:
+        align_op, align_balance = self._directau_align_params()
+        return loss.align_distance_sq(
+            head_ids=head_ids,
+            relation_ids=relation_ids,
+            tail_ids=tail_ids,
+            entity_emb=self.embed,
+            relation_emb=self.relation_embed,
+            align_balance=align_balance,
+            align_op=align_op,
+        )
+
     def train(
         self,
         heads: torch.Tensor,
@@ -154,14 +178,25 @@ class Component:
         if class_rank_balance < 0.0 or class_rank_balance > 1.0:
             raise ValueError("class_rank_balance must be in [0, 1].")
 
-        # Convert to plain lists for BernCorrupter so dict keys use value-based hashing
-        train_data_list = [d.tolist() if isinstance(d, torch.Tensor) else d for d in train_data]
-        if self.model_type in ["TransE", "TransD"]:
-            corrupter = BernCorrupter(train_data_list, self.n_entity, self.n_relation)
-        elif self.model_type in ["DistMult", "ComplEx"]:
-            corrupter = BernCorrupterMulti(train_data_list, self.n_entity, self.n_relation, self.model.n_sample)
-        else:
-            raise ValueError(f"Unsupported model type: {self.model_type}")
+        if not isinstance(train_data[0], torch.Tensor):
+            train_data = [torch.LongTensor(vec) for vec in train_data]
+        head, relation, tail = train_data
+        n_train = len(head)
+
+        # Stage-1 DirectAU-style pretraining hyperparameters.
+        kbgan_cfg = config._config["KBGAN"]
+        uni_scale = kbgan_cfg.get("emb_uniform_scale", 2.0)
+        align_gamma = kbgan_cfg.get("true_align_gamma", kbgan_cfg.get("emb_loss_gamma", 1.0))
+        align_op = kbgan_cfg.get("emb_align_op", "add")
+        align_balance = kbgan_cfg.get("emb_align_balance", 0.7)
+        entity_uniform_max_ids = kbgan_cfg.get("entity_uniform_max_ids", None)
+
+        if align_op not in ["add", "mul"]:
+            raise ValueError("emb_align_op must be one of ['add', 'mul']")
+        if not (0.0 <= align_balance <= 1.0):
+            raise ValueError("emb_align_balance must be in [0, 1]")
+        if entity_uniform_max_ids is not None and entity_uniform_max_ids < 2:
+            raise ValueError("entity_uniform_max_ids must be >= 2 or None")
 
         valid_data_no_label = convert_data_to_no_label(valid_data_w_label)
         rank_metrics = lambda: self.evaluate_on_ranking(
@@ -178,9 +213,76 @@ class Component:
         )
 
         print(f"Start training component: {self.model_type} model with role {self.role}...")
-        best_perf, best_epoch = self.model.train(
-            train_data, corrupter, tester, early_stop_patience=early_stop_patience
-        )
+
+        n_epoch = getattr(self.model, "n_epoch", 100)
+        n_batch = getattr(self.model, "n_batch", 100)
+        epoch_per_test = getattr(self.model, "epoch_per_test", 10)
+        best_perf = 0.0
+        best_epoch = -1
+        patience_counter = 0
+
+        for epoch in range(n_epoch):
+            epoch_loss = 0.0
+            rand_idx = torch.randperm(n_train)
+            head_epoch = head[rand_idx]
+            relation_epoch = relation[rand_idx]
+            tail_epoch = tail[rand_idx]
+
+            for h, r, t in batch_by_num(n_batch, head_epoch, relation_epoch, tail_epoch, n_sample=n_train):
+                batch_size = h.size(0)
+                h_device = h.to(config.device)
+                r_device = r.to(config.device)
+                t_device = t.to(config.device)
+
+                entity_ids_batch = torch.unique(torch.cat((h_device.reshape(-1), t_device.reshape(-1)), dim=0))
+                if entity_uniform_max_ids is not None and entity_ids_batch.numel() > entity_uniform_max_ids:
+                    sample_idx = torch.randperm(entity_ids_batch.numel(), device=entity_ids_batch.device)[:entity_uniform_max_ids]
+                    entity_ids_batch = entity_ids_batch[sample_idx]
+
+                # Stage-1 objective: mean align distance + gamma * batch entity uniformity.
+                align_dist_sq = loss.align_distance_sq(
+                    head_ids=h_device,
+                    relation_ids=r_device,
+                    tail_ids=t_device,
+                    entity_emb=self.embed,
+                    relation_emb=self.relation_embed,
+                    align_balance=align_balance,
+                    align_op=align_op,
+                )
+                align_loss_batch = align_dist_sq.mean()
+                uni_loss_batch = loss.uniform_loss(
+                    ids=entity_ids_batch,
+                    emb=self.embed,
+                    scale=uni_scale,
+                )
+                batch_loss = align_loss_batch + align_gamma * uni_loss_batch
+
+                self.opt_zero_grad()
+                batch_loss.backward()
+                self.opt_step()
+                epoch_loss += batch_loss.detach().item() * batch_size
+
+            logging.info("Epoch %d/%d, Loss=%f", epoch + 1, n_epoch, epoch_loss / n_train)
+            if (n_epoch >= epoch_per_test) and ((epoch + 1) % epoch_per_test == 0):
+                test_perf = tester()
+                if test_perf > best_perf:
+                    self.save()
+                    best_perf = test_perf
+                    best_epoch = epoch + 1
+                    patience_counter = 0
+                else:
+                    patience_counter += 1
+
+                if early_stop_patience > 0 and patience_counter >= early_stop_patience:
+                    logging.info(
+                        "Early stopping triggered at epoch %d (patience=%d)",
+                        epoch + 1,
+                        early_stop_patience,
+                    )
+                    break
+
+        if best_epoch > 0:
+            self.load(self.model_path)
         print(f"Trained component successfully: {self.model_type} model.")
         return best_perf, best_epoch
 
@@ -331,8 +433,9 @@ class Component:
                 )
                 tail_var = batch_tail.unsqueeze(1).expand(batch_size, self.n_entity).to(config.device)
 
-                batch_head_scores = self.model.score(all_var, relation_var, tail_var).detach()
-                batch_tail_scores = self.model.score(head_var, relation_var, all_var).detach()
+                # Stage-3 inference: rank by DirectAU distance d = ||q - e||^2 (ascending).
+                batch_head_scores = self._distance_score(all_var, relation_var, tail_var).detach()
+                batch_tail_scores = self._distance_score(head_var, relation_var, all_var).detach()
 
                 for head, relation, tail, head_scores, tail_scores in zip(
                     batch_head, batch_relation, batch_tail, batch_head_scores, batch_tail_scores
@@ -394,53 +497,37 @@ class Component:
 
     def find_optimal_threshold(
         self,
-        valid_data: tuple,
-        labels: list,
+        distances: np.ndarray,
+        labels: np.ndarray,
         n_thresholds: int = 100,
         optimizing_metric: str = "accuracy",
     ) -> Tuple[float, float]:
         """
-        Find the optimal threshold for triple classification using validation data.
+        Find the optimal threshold for triple classification from distance scores.
 
         Unified decision rule in this codebase:
-        score < threshold => positive (label=1).
+        distance <= threshold => positive (label=1).
 
         Args:
-            valid_data: Tuple of (heads, relations, tails)
-            labels: Ground truth labels for validation data
+            distances: Distance values for validation samples.
+            labels: Ground truth labels for validation samples.
             n_thresholds: Number of threshold values to try
 
         Returns:
             (Optimal threshold value, best validation score for optimizing_metric)
         """
-        heads, relations, tails = valid_data
-
-        # Compute scores for all validation samples (batched for efficiency)
-        scores_list = []
-        with torch.no_grad():
-            for batch_head, batch_relation, batch_tail in batch_by_size(
-                self.model.test_batch_size, heads, relations, tails
-            ):
-                head_var = torch.LongTensor(batch_head).to(config.device)
-                relation_var = torch.LongTensor(batch_relation).to(config.device)
-                tail_var = torch.LongTensor(batch_tail).to(config.device)
-
-                batch_scores = self.model.score(head_var, relation_var, tail_var)
-                batch_scores = batch_scores.detach().cpu().numpy()
-                scores_list.extend(batch_scores.tolist())
-
-        # Try different threshold values
-        scores_array = np.array(scores_list)
-        min_score = float(scores_array.min())
-        max_score = float(scores_array.max())
+        if distances.size == 0:
+            raise ValueError("No distances provided to find_optimal_threshold.")
+        min_score = float(distances.min())
+        max_score = float(distances.max())
         threshold_values = np.linspace(min_score, max_score, n_thresholds)
 
         best_val = -float("inf")
         best_threshold = 0.0
 
         for threshold in threshold_values:
-            predictions = np.where(scores_array < threshold, 1, 0).tolist()
-            scores_for_auc = (-scores_array).tolist()
+            predictions = np.where(distances <= threshold, 1, 0).tolist()
+            scores_for_auc = (-distances).tolist()
             candidate_metrics = metrics.classification_metrics(
                 predictions, labels, scores=scores_for_auc
             )
@@ -465,7 +552,8 @@ class Component:
             )
 
         heads_list, relations_list, tails_list, labels = test_data_w_label
-        scores_list = []
+        distances_list = []
+        relation_ids_list = []
         true_labels = []
 
         with torch.no_grad():
@@ -479,58 +567,94 @@ class Component:
                 head_var = torch.LongTensor(batch_head).to(config.device)
                 relation_var = torch.LongTensor(batch_relation).to(config.device)
                 tail_var = torch.LongTensor(batch_tail).to(config.device)
-                batch_scores = self.model.score(head_var, relation_var, tail_var).detach().cpu().tolist()
-                scores_list.extend([float(s) for s in batch_scores])
+                batch_distances = self._distance_score(head_var, relation_var, tail_var).detach().cpu().tolist()
+                distances_list.extend([float(s) for s in batch_distances])
+                relation_ids_list.extend([int(x) for x in batch_relation])
                 true_labels.extend([int(x) for x in batch_label])
-        if len(scores_list) == 0:
+        if len(distances_list) == 0:
             raise ValueError("No samples found in test_data for classification evaluation.")
+
+        distances_array = np.array(distances_list, dtype=np.float64)
+        relation_ids_array = np.array(relation_ids_list, dtype=np.int64)
+        true_labels_array = np.array(true_labels, dtype=np.int64)
 
         threshold = None
         if is_threshold_tunning:
             n_thresholds = 100
-            candidate_threshold, candidate_val = self.find_optimal_threshold(
-                valid_data=(heads_list, relations_list, tails_list),
-                labels=true_labels,
+            relation_thresholds = {}
+            for relation_id in np.unique(relation_ids_array):
+                rel_mask = relation_ids_array == relation_id
+                if not np.any(rel_mask):
+                    continue
+                relation_thresholds[int(relation_id)], _ = self.find_optimal_threshold(
+                    distances=distances_array[rel_mask],
+                    labels=true_labels_array[rel_mask],
+                    n_thresholds=n_thresholds,
+                    optimizing_metric=optimizing_metric,
+                )
+
+            candidate_threshold, _ = self.find_optimal_threshold(
+                distances=distances_array,
+                labels=true_labels_array,
                 n_thresholds=n_thresholds,
                 optimizing_metric=optimizing_metric,
             )
+            candidate_predictions = []
+            for dist, relation_id in zip(distances_array.tolist(), relation_ids_array.tolist()):
+                relation_threshold = relation_thresholds.get(int(relation_id), candidate_threshold)
+                candidate_predictions.append(1 if dist <= relation_threshold else 0)
+            candidate_scores_for_auc = (-distances_array).tolist()
+            candidate_metrics = metrics.classification_metrics(
+                candidate_predictions,
+                true_labels,
+                scores=candidate_scores_for_auc,
+            )
+            candidate_val = candidate_metrics.get(optimizing_metric, 0.0)
+
             best_so_far = self.best_threshold_perf.get(optimizing_metric, -float("inf"))
             if self.classification_threshold is None or candidate_val > best_so_far:
                 self.classification_threshold = candidate_threshold
+                self.global_threshold = candidate_threshold
+                self.relation_thresholds = relation_thresholds
                 self.best_threshold_perf[optimizing_metric] = candidate_val
                 logging.info(
-                    f"Updated best classification threshold ({optimizing_metric}={candidate_val:.4f}): "
-                    f"score < {self.classification_threshold:.4f} => positive."
+                    f"Updated thresholds ({optimizing_metric}={candidate_val:.4f}): "
+                    f"distance <= threshold => positive, relation_thresholds={len(self.relation_thresholds)}, "
+                    f"global_threshold={self.global_threshold:.4f}."
                 )
             else:
                 logging.info(
-                    f"Kept previous best classification threshold ({optimizing_metric}={best_so_far:.4f}). "
+                    f"Kept previous thresholds ({optimizing_metric}={best_so_far:.4f}). "
                     f"Current tuned threshold score is {candidate_val:.4f}."
                 )
             threshold = self.classification_threshold
             logging.info(
-                f"Using classification threshold: score < {self.classification_threshold:.4f} => positive "
-                f"(searched {n_thresholds} thresholds)."
+                f"Using relation-specific thresholds with global fallback={self.classification_threshold:.4f} "
+                f"(searched {n_thresholds} thresholds per relation/global)."
             )
         else:
             if external_threshold is not None:
-                threshold = external_threshold
+                threshold = float(external_threshold)
             else:
-                threshold = self.classification_threshold
+                threshold = self.global_threshold if self.global_threshold is not None else self.classification_threshold
 
         if threshold is None:
             raise ValueError(
                 "Classification threshold is None. Provide external_threshold or run with "
                 "is_threshold_tunning=True first. Decision rule is fixed: "
-                "score < threshold => positive."
+                "distance <= threshold => positive."
             )
 
-        # Fixed rule in this codebase: lower score means more likely positive.
-        scores_array = np.array(scores_list)
-        predictions = np.where(scores_array < threshold, 1, 0).tolist()
+        predictions = []
+        if external_threshold is not None:
+            predictions = np.where(distances_array <= threshold, 1, 0).tolist()
+        else:
+            for dist, relation_id in zip(distances_array.tolist(), relation_ids_array.tolist()):
+                relation_threshold = self.relation_thresholds.get(int(relation_id), threshold)
+                predictions.append(1 if dist <= relation_threshold else 0)
 
-        # Convert scores so that larger values indicate positive class for AUC
-        scores_for_auc = [-s for s in scores_list]
+        # Convert distances so that larger values indicate positive class for AUC.
+        scores_for_auc = (-distances_array).tolist()
 
         classification_metrics = metrics.classification_metrics(
             predictions, true_labels, scores=scores_for_auc
@@ -554,11 +678,11 @@ class Component:
         if external_threshold is not None:
             threshold_source = "External threshold"
         else:
-            threshold_source = "Internal threshold"
+            threshold_source = "Relation threshold + global fallback"
 
         logging.info(classification_metrics_str)
         logging.info(
             f"[Classification] threshold_source={threshold_source}, "
-            f"threshold={threshold:.6f}, decision_rule='score<threshold=>positive'"
+            f"threshold={threshold:.6f}, decision_rule='distance<=threshold=>positive'"
         )
         return classification_metrics
