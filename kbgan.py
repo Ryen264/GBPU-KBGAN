@@ -193,11 +193,12 @@ class KBGAN():
                 epoch_per_test: int=100,
                 n_generated_valid_negative: int=0,
                 negative_sampling_strategy: str='multinomial',
-                emb_uniform_p: float=0.5,
                 emb_uniform_scale: float=2.0,
                 entity_uniform_max_ids: int=2048,
+                uniform_gamma: float=1.0,
                 true_align_gamma: float=1.0,
                 fake_align_gamma: float=1.0,
+                dens_beta: float=0.0,
                 emb_align_op: str='add',
                 emb_align_balance: float=0.7,
                 rank_optimizing_metric: str='mrr',
@@ -253,6 +254,10 @@ class KBGAN():
             raise ValueError("emb_align_balance must be in [0, 1]")
         if entity_uniform_max_ids is not None and entity_uniform_max_ids < 2:
             raise ValueError("entity_uniform_max_ids must be >= 2 or None")
+        if uniform_gamma < 0.0:
+            raise ValueError("uniform_gamma must be >= 0")
+        if dens_beta < 0.0:
+            raise ValueError("dens_beta must be >= 0")
 
         # [EARLY STOPPING]
         patience_counter = 0
@@ -280,21 +285,15 @@ class KBGAN():
 
                 # --- KBGAN Discriminator Step ---
                 h_device, r_device, t_device = h.to(config.device), r.to(config.device), t.to(config.device)
-                # Batch-level uniformity over unique entities/relations in current mini-batch.
+                # Batch-level uniformity over unique entities in current mini-batch.
                 entity_ids_batch = torch.unique(torch.cat((h_device.reshape(-1), t_device.reshape(-1)), dim=0))
                 if entity_uniform_max_ids is not None and entity_ids_batch.numel() > entity_uniform_max_ids:
                     sample_idx = torch.randperm(entity_ids_batch.numel(), device=entity_ids_batch.device)[:entity_uniform_max_ids]
                     entity_ids_batch = entity_ids_batch[sample_idx]
-                relation_ids_batch = torch.unique(r_device.reshape(-1))
                 ent_uni_loss = loss.uniform_loss(
                     ids=entity_ids_batch,
                     emb=self.discriminator.embed,
                     scale=emb_uniform_scale,
-                )
-                rel_uni_loss = loss.uniform_loss(
-                    ids=relation_ids_batch,
-                    emb=self.discriminator.relation_embed,
-                    scale=emb_uniform_scale
                 )
                 true_dist_sq = loss.align_distance_sq(
                     head_ids=h_device,
@@ -323,13 +322,20 @@ class KBGAN():
 
                 # DirectAU-style discriminator objective:
                 # true pull + fake push (exp decay) + batch uniformity.
-                uniform_loss_batch = emb_uniform_p * ent_uni_loss + (1.0 - emb_uniform_p) * rel_uni_loss
+                uniform_loss_batch = ent_uni_loss
                 true_pull = true_align_gamma * true_dist_sq.mean()
                 fake_push = fake_align_gamma * torch.exp(-fake_dist_sq).mean()
-                emb_loss = uniform_loss_batch + true_pull + fake_push
+                emb_loss = true_pull + fake_push + uniform_gamma * uniform_loss_batch
 
-                # Generator reward: hard negatives are close to query => larger reward.
-                rewards_raw = -fake_dist_sq.detach()
+                # DENS reward: query-fooling term + factor-aware hardness term.
+                tail_true_emb = torch.nn.functional.normalize(self.discriminator.embed(t_device), p=2, dim=-1)
+                tail_fake_emb = torch.nn.functional.normalize(self.discriminator.embed(tail_smpl_device), p=2, dim=-1)
+                if tail_fake_emb.dim() == tail_true_emb.dim() + 1:
+                    tail_true_for_fake = tail_true_emb.unsqueeze(1).expand_as(tail_fake_emb)
+                else:
+                    tail_true_for_fake = tail_true_emb
+                tail_hardness_dist_sq = (tail_true_for_fake - tail_fake_emb).pow(2).sum(dim=-1)
+                rewards_raw = -fake_dist_sq.detach() - dens_beta * tail_hardness_dist_sq.detach()
 
                 reward_sum = float(torch.sum(rewards_raw).item())
                 rewards = rewards_raw - avg_reward
