@@ -14,11 +14,12 @@ KBGAN:
   epoch_per_test: 10
   n_generated_valid_negative: 3
   negative_sampling_strategy: topk
-  emb_loss_gamma: 1.0
   emb_uniform_p: 0.5
   emb_uniform_scale: 2.0
+  true_align_gamma: 1.0
+  fake_align_gamma: 1.0
   emb_align_op: 'add'
-  score_sep_weight: 0.0
+  emb_align_balance: 0.5
 TransE:
   optimizer: Adagrad
   learning_rate: 0.01
@@ -26,7 +27,7 @@ TransE:
   margin: 3
   p: 1
   temp: 1
-  n_epoch: 20
+  n_epoch: 10
   n_batch: 10
   epoch_per_test: 5
   model_file: TransE.mdl
@@ -37,7 +38,7 @@ TransD:
   margin: 3
   p: 1
   temp: 1
-  n_epoch: 20
+  n_epoch: 10
   n_batch: 10
   epoch_per_test: 5
   model_file: TransD.mdl
@@ -49,7 +50,7 @@ DistMult:
   lam: 0.1
   n_sample: 20
   sample_freq: 1
-  n_epoch: 20
+  n_epoch: 10
   n_batch: 10
   epoch_per_test: 5
   model_file: DistMult.mdl
@@ -61,7 +62,7 @@ ComplEx:
   lam: 0.1
   n_sample: 20
   sample_freq: 1
-  n_epoch: 20
+  n_epoch: 10
   n_batch: 10
   epoch_per_test: 5
   model_file: ComplEx.mdl

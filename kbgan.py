@@ -1,16 +1,14 @@
 import os
 import logging
 import torch
-from typing import Tuple
+from typing import Generator, Tuple
 import numpy as np
 from datetime import datetime
 
 from datasets import batch_by_num, batch_by_size, BernCorrupterMulti
 from component import Component
-from loss import total_loss as embedding_total_loss
+import loss
 import config
-
-FILTER_RANKING_PENALTY = 1e30
 
 def _join_rank_class_metrics(rank_value: float, class_value: float, class_rank_balance: float) -> float:
     """Blend rank and classification metric values using class_rank_balance in [0, 1]."""
@@ -118,15 +116,12 @@ class KBGAN():
         print(f"Trained {self.generator_type} generator successfully with performance: {best_perf_g}, epoch: {best_epoch_g}")
         return best_perf_d, best_perf_g
 
-    def generator_step(self, hs: torch.Tensor, rs: torch.Tensor, ts: torch.Tensor, relation_batch: torch.Tensor,
-                       avg_reward: float, n_sample: int, temperature: float,
-                       negative_sampling_strategy: str, class_rank_balance: float) -> Tuple[torch.Tensor, torch.Tensor, float]:
+    def generator_step(self, hs: torch.Tensor, rs: torch.Tensor, ts: torch.Tensor,
+                       n_sample: int, temperature: float,
+                       negative_sampling_strategy: str
+        ) -> Tuple[Generator, torch.Tensor, torch.Tensor]:
         """
-        KBGAN-level generator step using a task-aware reward.
-
-        Reward combines:
-        - ranking-style signal: -fake_score (higher when fake looks plausible)
-        - classification-style signal: sigmoid(-fake_score)
+        KBGAN-level generator step: sample fake triples and return live generator for reward update.
         """
         gen_step = self.generator.generator_step(
             hs, rs, ts,
@@ -138,112 +133,157 @@ class KBGAN():
         head_smpl, tail_smpl = next(gen_step)
         head_smpl_device = head_smpl.to(config.device)
         tail_smpl_device = tail_smpl.to(config.device)
-
-        relation_device = relation_batch.to(config.device)
-        if head_smpl_device.dim() == relation_device.dim() + 1:
-            relation_for_fake = relation_device.unsqueeze(1).expand_as(head_smpl_device)
-        else:
-            relation_for_fake = relation_device
-
-        fake_scores = self.discriminator.score(head_smpl_device, relation_for_fake, tail_smpl_device).detach()
-
-        use_rank_task = class_rank_balance < 1.0
-        use_class_task = class_rank_balance > 0.0
-
-        reward_rank = -fake_scores
-        reward_class = torch.sigmoid(-fake_scores)
-
-        if use_rank_task and use_class_task:
-            rewards_raw = (1.0 - class_rank_balance) * reward_rank + class_rank_balance * reward_class
-        elif use_rank_task:
-            rewards_raw = reward_rank
-        else:
-            rewards_raw = reward_class
-
-        mean_reward = float(torch.sum(rewards_raw).item())
-        rewards = rewards_raw - avg_reward
-        rewards_for_gen = rewards.unsqueeze(1) if rewards.dim() == 1 else rewards
-        gen_step.send(rewards_for_gen)
-        return head_smpl_device, tail_smpl_device, mean_reward
+        return gen_step, head_smpl_device, tail_smpl_device
 
     def discriminator_step(self, h: torch.Tensor, r: torch.Tensor, t: torch.Tensor,
-                           head_fake: torch.Tensor, tail_fake: torch.Tensor,
-                           class_rank_balance: float,
-                           bce_logits_criterion: torch.nn.BCEWithLogitsLoss,
-                           emb_loss_gamma: float, emb_uniform_p: float,
-                           emb_uniform_scale: float, emb_align_op: str,
-                           score_sep_weight: float=1.0) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+                           emb_uniform_p: float, emb_uniform_scale: float,
+                           true_align_gamma: float, fake_align_gamma: float,
+                           emb_align_op: str, emb_align_balance: float,
+                           head_fake: torch.Tensor=None, tail_fake: torch.Tensor=None,
+                           return_fake_align: bool=False,
+        ) -> torch.Tensor:
         """
-        KBGAN-level discriminator step objective:
-        total = embedding_loss + score_sep_weight * task_loss
-
-        task_loss mixes ranking/classification losses by class_rank_balance when both are enabled.
+        KBGAN-level discriminator objective: pairwise true-vs-fake loss + embedding regularization.
         """
         h_device, r_device, t_device = h.to(config.device), r.to(config.device), t.to(config.device)
-
-        emb_loss = embedding_total_loss(
+        entity_ids_full = torch.arange(self.n_entity, device=config.device, dtype=torch.long)
+        
+        ent_uni_loss = loss.uniform_loss(
+            ids=entity_ids_full,
+            emb=self.discriminator.embed,
+            scale=emb_uniform_scale
+        )
+        rel_uni_loss = loss.uniform_loss(
+            ids=r_device,
+            emb=self.discriminator.relation_embed,
+            scale=emb_uniform_scale
+        )
+        true_ali_loss = loss.align_loss(
             head_ids=h_device,
             relation_ids=r_device,
             tail_ids=t_device,
             entity_emb=self.discriminator.embed,
             relation_emb=self.discriminator.relation_embed,
-            gamma=emb_loss_gamma,
+            align_balance=emb_align_balance,
             align_op=emb_align_op,
-            p=emb_uniform_p,
-            scale=emb_uniform_scale,
+        )
+        emb_reg_loss = true_align_gamma * true_ali_loss + emb_uniform_p * ent_uni_loss + (1.0 - emb_uniform_p) * rel_uni_loss
+
+        if head_fake is None or tail_fake is None:
+            return emb_reg_loss
+
+        head_fake_device = head_fake.to(config.device)
+        tail_fake_device = tail_fake.to(config.device)
+        if head_fake_device.dim() == r_device.dim() + 1:
+            relation_for_fake = r_device.unsqueeze(1).expand_as(head_fake_device)
+        else:
+            relation_for_fake = r_device
+
+        fake_ali_loss = loss.align_loss(
+            head_ids=head_fake_device,
+            relation_ids=relation_for_fake,
+            tail_ids=tail_fake_device,
+            entity_emb=self.discriminator.embed,
+            relation_emb=self.discriminator.relation_embed,
+            align_balance=emb_align_balance,
+            align_op=emb_align_op,
+        )
+        total_loss = emb_reg_loss - fake_align_gamma * fake_ali_loss
+        if return_fake_align:
+            return total_loss, fake_ali_loss.detach()
+        return total_loss
+
+    def _run_validation_epoch(self,
+                              epoch: int,
+                              n_epoch: int,
+                              valid_data_w_label: tuple,
+                              heads: torch.Tensor,
+                              tails: torch.Tensor,
+                              temperature: float,
+                              do_class_task: bool,
+                              class_rank_balance: float,
+                              rank_optimizing_metric: str,
+                              rank_filt: bool,
+                              rank_k_list: list,
+                              class_optimizing_metric: str,
+                              class_use_maxgood_minbad_threshold: bool,
+                              n_generated_valid_negative: int,
+                              class_true_percentile: float,
+                              class_fake_percentile: float,
+                              class_true_fake_balance: float,
+        ) -> float:
+        # [VALID LOSS SNAPSHOT]
+        if len(valid_data_w_label) >= 4:
+            valid_head_all, valid_relation_all, valid_tail_all, valid_label_all = valid_data_w_label
+            valid_labels_np = np.asarray(valid_label_all)
+            valid_pos_mask = (valid_labels_np == 1)
+            if np.any(valid_pos_mask):
+                valid_head_eval = torch.LongTensor(np.asarray(valid_head_all)[valid_pos_mask].astype(np.int64))
+                valid_relation_eval = torch.LongTensor(np.asarray(valid_relation_all)[valid_pos_mask].astype(np.int64))
+                valid_tail_eval = torch.LongTensor(np.asarray(valid_tail_all)[valid_pos_mask].astype(np.int64))
+            else:
+                valid_head_eval, valid_relation_eval, valid_tail_eval = valid_data_w_label[:3]
+        else:
+            valid_head_eval, valid_relation_eval, valid_tail_eval = valid_data_w_label[:3]
+
+        if not isinstance(valid_head_eval, torch.Tensor):
+            valid_head_eval = torch.LongTensor(valid_head_eval)
+        if not isinstance(valid_relation_eval, torch.Tensor):
+            valid_relation_eval = torch.LongTensor(valid_relation_eval)
+        if not isinstance(valid_tail_eval, torch.Tensor):
+            valid_tail_eval = torch.LongTensor(valid_tail_eval)
+
+        # [RANK TASK]
+        valid_data_no_label = valid_data_w_label[:3]
+        rank_metrics = self.discriminator.evaluate_on_ranking(
+            valid_data_no_label,
+            heads,
+            tails,
+            filt=rank_filt,
+            k_list=rank_k_list,
         )
 
-        if score_sep_weight == 0.0:
-            # No score-separation contribution: skip rank/class score-task computation entirely.
-            score_loss = torch.tensor(0.0, device=config.device)
-            return emb_loss, emb_loss, score_loss
-
-        use_rank_task = class_rank_balance < 1.0
-        use_class_task = class_rank_balance > 0.0
-
-        rank_loss_scalar = torch.tensor(0.0, device=config.device)
-        class_loss_scalar = torch.tensor(0.0, device=config.device)
-
-        if use_rank_task:
-            rank_loss, _, _, _ = self.discriminator.discriminator_step(
-                head=h_device,
-                relation=r_device,
-                tail=t_device,
-                head_fake=head_fake,
-                tail_fake=tail_fake,
-                train=True,
-            )
-            rank_loss_scalar = torch.mean(rank_loss)
-
-        if use_class_task:
-            pos_score = self.discriminator.score(h_device, r_device, t_device)
-            if head_fake.dim() == r_device.dim() + 1:
-                relation_for_fake = r_device.unsqueeze(1).expand_as(head_fake)
+        # [CLASS TASK]
+        if do_class_task:
+            class_threshold = None
+            is_threshold_tunning = False
+            # [MAXGOOD MINBAD THRESHOLD]
+            if class_use_maxgood_minbad_threshold:
+                class_threshold = self._compute_midpoint_threshold_from_labeled_data(
+                    valid_data_w_label,
+                    n_generated_valid_negative=n_generated_valid_negative,
+                    temperature=temperature,
+                    true_percentile=class_true_percentile,
+                    fake_percentile=class_fake_percentile,
+                    true_fake_balance=class_true_fake_balance,
+                )
+                if class_threshold is not None:
+                    self.optimal_threshold = class_threshold
+                    logging.info(f"Using validation midpoint threshold: {class_threshold:.6f}")
+                else:
+                    # Fallback: tune threshold from validation metrics when midpoint cannot be computed.
+                    is_threshold_tunning = True
+                    logging.warning("Validation midpoint threshold unavailable. Falling back to threshold tuning on validation set.")
             else:
-                relation_for_fake = r_device
-            neg_score = self.discriminator.score(head_fake, relation_for_fake, tail_fake)
-
-            pos_logits = -pos_score
-            neg_logits = -neg_score
-            target_pos = torch.ones_like(pos_logits, dtype=torch.float32)
-            target_neg = torch.zeros_like(neg_logits, dtype=torch.float32)
-
-            class_loss_scalar = (
-                bce_logits_criterion(pos_logits, target_pos)
-                + bce_logits_criterion(neg_logits, target_neg)
+                # Default behavior when midpoint rule is disabled: tune threshold on validation set.
+                is_threshold_tunning = True
+            class_metrics = self.discriminator.evaluate_on_classification(
+                valid_data_w_label,
+                optimizing_metric=class_optimizing_metric,
+                is_threshold_tunning=is_threshold_tunning,
+                external_threshold=class_threshold,
             )
-
-        if use_rank_task and use_class_task:
-            score_loss = (1.0 - class_rank_balance) * rank_loss_scalar + class_rank_balance * class_loss_scalar
-        elif use_rank_task:
-            score_loss = rank_loss_scalar
-        elif use_class_task:
-            score_loss = class_loss_scalar
+            # [JOINT METRIC]
+            test_perf = (1.0 - class_rank_balance) * rank_metrics[rank_optimizing_metric] \
+                        + class_rank_balance * class_metrics[class_optimizing_metric]
+            
+            log_msg = f"Valid epoch {epoch + 1}/{n_epoch}, perf={test_perf}"
+            log_msg += f"\n\t{rank_optimizing_metric}={rank_metrics[rank_optimizing_metric]}, {class_optimizing_metric}={class_metrics[class_optimizing_metric]}"
         else:
-            score_loss = torch.tensor(0.0, device=config.device)
-
-        joint_loss = emb_loss + score_sep_weight * score_loss
-        return joint_loss, emb_loss, score_loss
+            test_perf = rank_metrics[rank_optimizing_metric]
+            log_msg = f"Valid epoch {epoch + 1}/{n_epoch}, perf={test_perf}"
+        logging.info(log_msg)
+        return test_perf
 
     def train_kbgan(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data_w_label: tuple,
                 class_rank_balance: float=1.0,
@@ -256,11 +296,12 @@ class KBGAN():
                 epoch_per_test: int=100,
                 n_generated_valid_negative: int=0,
                 negative_sampling_strategy: str='multinomial',
-                emb_loss_gamma: float=1.0,
                 emb_uniform_p: float=0.5,
                 emb_uniform_scale: float=2.0,
+                true_align_gamma: float=1.0,
+                fake_align_gamma: float=1.0,
                 emb_align_op: str='add',
-                score_sep_weight: float=1.0,
+                emb_align_balance: float=0.7,
                 rank_optimizing_metric: str='mrr',
                 rank_filt: bool=True,
                 rank_k_list: list=[1, 3, 10],
@@ -286,6 +327,9 @@ class KBGAN():
         emb_align_op:
         - 'add': f(e, r) = e + r
         - 'mul': f(e, r) = e * r (element-wise)
+
+        fake_align_gamma:
+        - scales repulsion from generated fake triples via (-fake align loss)
         """
         if not isinstance(train_data[0], torch.Tensor):
             train_data = [torch.LongTensor(vec) for vec in train_data]
@@ -304,19 +348,18 @@ class KBGAN():
 
         # Keep this flag for validation-time metric computation/model selection only.
         do_class_task = (class_rank_balance > 0.0)
-        bce_logits_criterion = torch.nn.BCEWithLogitsLoss()
 
         if emb_align_op not in ['add', 'mul']:
             raise ValueError("emb_align_op must be one of ['add', 'mul']")
+        if not (0.0 <= emb_align_balance <= 1.0):
+            raise ValueError("emb_align_balance must be in [0, 1]")
 
         # [EARLY STOPPING]
         patience_counter = 0
 
         for epoch in range(n_epoch):
             # [ORIGINAL KBGAN]
-            epoch_joint_loss = 0.0
             epoch_emb_loss = 0.0
-            epoch_score_loss = 0.0
             epoch_reward = 0.0
 
             # [ORIGINAL KBGAN]
@@ -324,206 +367,78 @@ class KBGAN():
             for h, r, t, hs, rs, ts in batch_by_num(n_batch, head, relation, tail, head_cand, relation_cand, tail_cand, n_sample=n_train):             
                 batch_size = h.size(0)
                 # --- KBGAN Generator Step ---
-                head_smpl_device, tail_smpl_device, reward_sum = self.generator_step(
+                gen_step, head_smpl_device, tail_smpl_device = self.generator_step(
                     hs=hs,
                     rs=rs,
                     ts=ts,
-                    relation_batch=r,
-                    avg_reward=avg_reward,
                     n_sample=n_sample,
                     temperature=temperature,
                     negative_sampling_strategy=negative_sampling_strategy,
-                    class_rank_balance=class_rank_balance,
                 )
-                epoch_reward += reward_sum
 
                 # --- KBGAN Discriminator Step ---
-                joint_loss, emb_loss, score_loss = self.discriminator_step(
+                emb_loss, fake_ali_loss_reward = self.discriminator_step(
                     h=h,
                     r=r,
                     t=t,
                     head_fake=head_smpl_device,
                     tail_fake=tail_smpl_device,
-                    class_rank_balance=class_rank_balance,
-                    bce_logits_criterion=bce_logits_criterion,
-                    emb_loss_gamma=emb_loss_gamma,
                     emb_uniform_p=emb_uniform_p,
                     emb_uniform_scale=emb_uniform_scale,
+                    true_align_gamma=true_align_gamma,
                     emb_align_op=emb_align_op,
-                    score_sep_weight=score_sep_weight,
+                    emb_align_balance=emb_align_balance,
+                    fake_align_gamma=fake_align_gamma,
+                    return_fake_align=True,
                 )
+
+                rewards_raw = -fake_align_gamma * fake_ali_loss_reward
+                reward_sum = float(torch.sum(rewards_raw).item())
+                rewards = rewards_raw - avg_reward
+                rewards_for_gen = rewards.unsqueeze(1) if rewards.dim() == 1 else rewards
+                gen_step.send(rewards_for_gen)
+                epoch_reward += reward_sum
 
                 # Optimizer Step
                 self.discriminator.opt_zero_grad()
-                joint_loss.backward()
+                emb_loss.backward()
 
                 # Apply entity embedding constraints (e.g. norm <= 1)
                 self.discriminator.opt_step()
 
                 # Losses are batch means, so weight by batch size then divide by n_train at epoch end.
-                epoch_joint_loss += joint_loss.item() * batch_size
                 epoch_emb_loss += emb_loss.detach().item() * batch_size
-                epoch_score_loss += score_loss.detach().item() * batch_size
                 
             # [ORIGINAL KBGAN]       
-            avg_joint_loss = epoch_joint_loss / n_train
             avg_emb_loss = epoch_emb_loss / n_train
-            avg_score_loss = epoch_score_loss / n_train
             avg_reward = epoch_reward / n_train
             log_msg = (
                 f"Train epoch {epoch + 1}/{n_epoch}, "
-                f"joint_loss={avg_joint_loss:.6f}, "
                 f"emb_loss={avg_emb_loss:.6f}, "
-                f"score_loss={avg_score_loss:.6f}, "
                 f"reward={avg_reward:.6f}"
             )
             logging.info(log_msg)
 
             if (epoch + 1) % epoch_per_test == 0:
-                # [VALID LOSS SNAPSHOT]
-                if len(valid_data_w_label) >= 4:
-                    valid_head_all, valid_relation_all, valid_tail_all, valid_label_all = valid_data_w_label
-                    valid_labels_np = np.asarray(valid_label_all)
-                    valid_pos_mask = (valid_labels_np == 1)
-                    if np.any(valid_pos_mask):
-                        valid_head_eval = torch.LongTensor(np.asarray(valid_head_all)[valid_pos_mask].astype(np.int64))
-                        valid_relation_eval = torch.LongTensor(np.asarray(valid_relation_all)[valid_pos_mask].astype(np.int64))
-                        valid_tail_eval = torch.LongTensor(np.asarray(valid_tail_all)[valid_pos_mask].astype(np.int64))
-                    else:
-                        valid_head_eval, valid_relation_eval, valid_tail_eval = valid_data_w_label[:3]
-                else:
-                    valid_head_eval, valid_relation_eval, valid_tail_eval = valid_data_w_label[:3]
-
-                if not isinstance(valid_head_eval, torch.Tensor):
-                    valid_head_eval = torch.LongTensor(valid_head_eval)
-                if not isinstance(valid_relation_eval, torch.Tensor):
-                    valid_relation_eval = torch.LongTensor(valid_relation_eval)
-                if not isinstance(valid_tail_eval, torch.Tensor):
-                    valid_tail_eval = torch.LongTensor(valid_tail_eval)
-
-                n_valid = len(valid_head_eval)
-                valid_joint_loss_sum = 0.0
-                valid_emb_loss_sum = 0.0
-                valid_score_loss_sum = 0.0
-
-                if n_valid > 0:
-                    valid_corrupter = BernCorrupterMulti(
-                        (
-                            valid_head_eval.tolist(),
-                            valid_relation_eval.tolist(),
-                            valid_tail_eval.tolist(),
-                        ),
-                        self.n_entity,
-                        self.n_relation,
-                        n_candidate,
-                    )
-                    valid_head_cand, valid_relation_cand, valid_tail_cand = valid_corrupter.corrupt(
-                        valid_head_eval,
-                        valid_relation_eval,
-                        valid_tail_eval,
-                        keep_truth=False,
-                    )
-
-                    with torch.no_grad():
-                        for vh, vr, vt, vhs, vrs, vts in batch_by_num(
-                            n_batch,
-                            valid_head_eval,
-                            valid_relation_eval,
-                            valid_tail_eval,
-                            valid_head_cand,
-                            valid_relation_cand,
-                            valid_tail_cand,
-                            n_sample=n_valid,
-                        ):
-                            gen_step = self.generator.generator_step(
-                                vhs,
-                                vrs,
-                                vts,
-                                n_sample=n_sample,
-                                temperature=temperature,
-                                train=False,
-                                sampling_strategy=negative_sampling_strategy,
-                            )
-                            valid_head_fake, valid_tail_fake = next(gen_step)
-                            valid_head_fake = valid_head_fake.to(config.device)
-                            valid_tail_fake = valid_tail_fake.to(config.device)
-
-                            v_joint_loss, v_emb_loss, v_score_loss = self.discriminator_step(
-                                h=vh,
-                                r=vr,
-                                t=vt,
-                                head_fake=valid_head_fake,
-                                tail_fake=valid_tail_fake,
-                                class_rank_balance=class_rank_balance,
-                                bce_logits_criterion=bce_logits_criterion,
-                                emb_loss_gamma=emb_loss_gamma,
-                                emb_uniform_p=emb_uniform_p,
-                                emb_uniform_scale=emb_uniform_scale,
-                                emb_align_op=emb_align_op,
-                                score_sep_weight=score_sep_weight,
-                            )
-
-                            valid_batch_size = vh.size(0)
-                            valid_joint_loss_sum += v_joint_loss.item() * valid_batch_size
-                            valid_emb_loss_sum += v_emb_loss.item() * valid_batch_size
-                            valid_score_loss_sum += v_score_loss.item() * valid_batch_size
-
-                    valid_avg_joint_loss = valid_joint_loss_sum / n_valid
-                    valid_avg_emb_loss = valid_emb_loss_sum / n_valid
-                    valid_avg_score_loss = valid_score_loss_sum / n_valid
-                    logging.info(
-                        f"Valid epoch {epoch + 1}/{n_epoch}, "
-                        f"joint_loss={valid_avg_joint_loss:.6f}, "
-                        f"emb_loss={valid_avg_emb_loss:.6f}, "
-                        f"score_loss={valid_avg_score_loss:.6f}"
-                    )
-
-                # [RANK TASK]
-                valid_data_no_label = valid_data_w_label[:3]
-                rank_metrics = self.discriminator.evaluate_on_ranking(valid_data_no_label, heads, tails, filt=rank_filt, k_list=rank_k_list)
-
-                # [CLASS TASK]
-                if do_class_task:
-                    class_threshold = None
-                    is_threshold_tunning = False
-                    # [MAXGOOD MINBAD THRESHOLD]
-                    if class_use_maxgood_minbad_threshold:
-                        class_threshold = self._compute_midpoint_threshold_from_labeled_data(
-                            valid_data_w_label,
-                            n_generated_valid_negative=n_generated_valid_negative,
-                            temperature=temperature,
-                            true_percentile=class_true_percentile,
-                            fake_percentile=class_fake_percentile,
-                            true_fake_balance=class_true_fake_balance
-                        )
-
-                        if class_threshold is not None:
-                            self.optimal_threshold = class_threshold
-                            logging.info(f"Using validation midpoint threshold: {class_threshold:.6f}")
-                        else:
-                            # Fallback: tune threshold from validation metrics when midpoint cannot be computed.
-                            is_threshold_tunning = True
-                            logging.warning("Validation midpoint threshold unavailable. Falling back to threshold tuning on validation set.")
-                    else:
-                        # Default behavior when midpoint rule is disabled: tune threshold on validation set.
-                        is_threshold_tunning = True
-                    class_metrics = self.discriminator.evaluate_on_classification(valid_data_w_label,
-                                                                                  optimizing_metric=class_optimizing_metric,
-                                                                                  is_threshold_tunning=is_threshold_tunning,
-                                                                                  external_threshold=class_threshold)
-                    
-                    # [JOINT METRIC]
-                    test_perf = _join_rank_class_metrics(
-                        rank_value=rank_metrics[rank_optimizing_metric],
-                        class_value=class_metrics[class_optimizing_metric],
-                        class_rank_balance=class_rank_balance,
-                    )
-                    log_msg = f"Valid epoch {epoch + 1}/{n_epoch}, perf={test_perf}"
-                    log_msg += f"\n\t{rank_optimizing_metric}={rank_metrics[rank_optimizing_metric]}, {class_optimizing_metric}={class_metrics[class_optimizing_metric]}"
-                else:
-                    test_perf = rank_metrics[rank_optimizing_metric]
-                    log_msg = f"Valid epoch {epoch + 1}/{n_epoch}, perf={test_perf}"
-                logging.info(log_msg)
+                test_perf = self._run_validation_epoch(
+                    epoch=epoch,
+                    n_epoch=n_epoch,
+                    valid_data_w_label=valid_data_w_label,
+                    heads=heads,
+                    tails=tails,
+                    temperature=temperature,
+                    do_class_task=do_class_task,
+                    class_rank_balance=class_rank_balance,
+                    rank_optimizing_metric=rank_optimizing_metric,
+                    rank_filt=rank_filt,
+                    rank_k_list=rank_k_list,
+                    class_optimizing_metric=class_optimizing_metric,
+                    class_use_maxgood_minbad_threshold=class_use_maxgood_minbad_threshold,
+                    n_generated_valid_negative=n_generated_valid_negative,
+                    class_true_percentile=class_true_percentile,
+                    class_fake_percentile=class_fake_percentile,
+                    class_true_fake_balance=class_true_fake_balance,
+                )
 
                 # [ORIGINAL KBGAN]
                 if test_perf > best_perf:

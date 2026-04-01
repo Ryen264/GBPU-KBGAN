@@ -55,11 +55,11 @@ def main():
         print("Running config: ", _config)
 
     dis_type, gen_type = _config.d_config, _config.g_config
-
     class_rank_balance = _config['KBGAN']['class_rank_balance']
     early_stop_patience = _config['KBGAN']['early_stop_patience']
     temperature = _config['KBGAN']['temperature']
     n_sample = _config['KBGAN']['n_sample']
+
     # For hard negative mining with topk, use larger pool by default (100 candidates, select 20)
     # If negative_sampling_strategy is 'multinomial', pool size doesn't matter (all equal probability)
     negative_sampling_strategy = _config['KBGAN'].get('negative_sampling_strategy', 'topk')
@@ -69,16 +69,18 @@ def main():
     else:
         # Multinomial: pool size equals sample size (no hard mining)
         n_candidate = _config['KBGAN'].get('n_candidate', n_sample)
+        
     n_epoch = _config['KBGAN']['n_epoch']
     n_batch = _config['KBGAN']['n_batch']
     epoch_per_test = _config['KBGAN']['epoch_per_test']
     n_generated_valid_negative = _config['KBGAN'].get('n_generated_valid_negative', 5)
-    score_sep_weight = _config['KBGAN'].get('score_sep_weight', 1.0)
-    emb_loss_gamma = _config['KBGAN'].get('emb_loss_gamma', 1.0)
     emb_uniform_p = _config['KBGAN'].get('emb_uniform_p', 0.5)
     emb_uniform_scale = _config['KBGAN'].get('emb_uniform_scale', 2.0)
+    true_align_gamma = _config['KBGAN'].get('true_align_gamma', _config['KBGAN'].get('emb_loss_gamma', 1.0))
+    fake_align_gamma = _config['KBGAN'].get('fake_align_gamma', 1.0)
     emb_align_op = _config['KBGAN'].get('emb_align_op', 'add')
-
+    emb_align_balance = _config['KBGAN'].get('emb_align_balance', 0.7)
+    
     # Assign or construct pretrained components' paths for 'gan-train' mode
     pretrained_dis_path = os.path.join('.', 'models', DATASET, working_task, 'components', dis_type + '.mdl')
     pretrained_gen_path = os.path.join('.', 'models', DATASET, working_task, 'components', gen_type + '.mdl')
@@ -166,7 +168,7 @@ def main():
             f"\tclass_optimizing_metric={CLASS_OPTIMIZING_METRIC}\n\tclass_use_maxgood_minbad_threshold={CLASS_USE_MAXGOOD_MINBAD_THRESHOLD}\n"
             f"\tclass_true_fake_balance={CLASS_TRUE_FAKE_BALANCE}\n"
             f"\tn_generated_valid_negative={n_generated_valid_negative}\n"
-            f"\temb_loss_gamma={emb_loss_gamma}\n\temb_uniform_p={emb_uniform_p}\n\temb_uniform_scale={emb_uniform_scale}\n\temb_align_op={emb_align_op}\n\tscore_sep_weight={score_sep_weight}")
+            f"\ttrue_align_gamma={true_align_gamma}\n\temb_uniform_p={emb_uniform_p}\n\temb_uniform_scale={emb_uniform_scale}\n\temb_align_op={emb_align_op}\n\temb_align_balance={emb_align_balance}\n\tfake_align_gamma={fake_align_gamma}")
         best_perf = model.train_kbgan(heads, tails, train_data, valid_data_with_labels,
                                     class_rank_balance=class_rank_balance,
                                     early_stop_patience=early_stop_patience,
@@ -178,11 +180,12 @@ def main():
                                     epoch_per_test=epoch_per_test,
                                     n_generated_valid_negative=n_generated_valid_negative,
                                     negative_sampling_strategy=negative_sampling_strategy,
-                                    emb_loss_gamma=emb_loss_gamma,
                                     emb_uniform_p=emb_uniform_p,
                                     emb_uniform_scale=emb_uniform_scale,
+                                    true_align_gamma=true_align_gamma,
+                                    fake_align_gamma=fake_align_gamma,
                                     emb_align_op=emb_align_op,
-                                    score_sep_weight=score_sep_weight,
+                                    emb_align_balance=emb_align_balance,
                                     rank_optimizing_metric=RANK_OPTIMIZING_METRIC,
                                     rank_filt=RANK_FILT,
                                     rank_k_list=RANK_K_LIST,
@@ -225,7 +228,7 @@ def main():
             f"\tclass_optimizing_metric={CLASS_OPTIMIZING_METRIC}\n\tclass_use_maxgood_minbad_threshold={CLASS_USE_MAXGOOD_MINBAD_THRESHOLD}\n"
             f"\tclass_true_fake_balance={CLASS_TRUE_FAKE_BALANCE}\n"
             f"\tn_generated_valid_negative={n_generated_valid_negative}\n"
-            f"\temb_loss_gamma={emb_loss_gamma}\n\temb_uniform_p={emb_uniform_p}\n\temb_uniform_scale={emb_uniform_scale}\n\temb_align_op={emb_align_op}\n\tscore_sep_weight={score_sep_weight}")
+            f"\ttrue_align_gamma={true_align_gamma}\n\temb_uniform_p={emb_uniform_p}\n\temb_uniform_scale={emb_uniform_scale}\n\temb_align_op={emb_align_op}\n\temb_align_balance={emb_align_balance}\n\tfake_align_gamma={fake_align_gamma}")
         best_perf = model.train_kbgan(heads, tails, train_data, valid_data_with_labels,
                                     class_rank_balance=class_rank_balance,
                                     early_stop_patience=early_stop_patience,
@@ -237,11 +240,12 @@ def main():
                                     epoch_per_test=epoch_per_test,
                                     n_generated_valid_negative=n_generated_valid_negative,
                                     negative_sampling_strategy=negative_sampling_strategy,
-                                    emb_loss_gamma=emb_loss_gamma,
                                     emb_uniform_p=emb_uniform_p,
                                     emb_uniform_scale=emb_uniform_scale,
+                                    true_align_gamma=true_align_gamma,
+                                    fake_align_gamma=fake_align_gamma,
                                     emb_align_op=emb_align_op,
-                                    score_sep_weight=score_sep_weight,
+                                    emb_align_balance=emb_align_balance,
                                     rank_optimizing_metric=RANK_OPTIMIZING_METRIC,
                                     rank_filt=RANK_FILT,
                                     rank_k_list=RANK_K_LIST,
