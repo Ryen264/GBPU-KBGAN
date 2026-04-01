@@ -116,85 +116,6 @@ class KBGAN():
         print(f"Trained {self.generator_type} generator successfully with performance: {best_perf_g}, epoch: {best_epoch_g}")
         return best_perf_d, best_perf_g
 
-    def generator_step(self, hs: torch.Tensor, rs: torch.Tensor, ts: torch.Tensor,
-                       n_sample: int, temperature: float,
-                       negative_sampling_strategy: str
-        ) -> Tuple[Generator, torch.Tensor, torch.Tensor]:
-        """
-        KBGAN-level generator step: sample fake triples and return live generator for reward update.
-        """
-        gen_step = self.generator.generator_step(
-            hs, rs, ts,
-            n_sample=n_sample,
-            temperature=temperature,
-            train=True,
-            sampling_strategy=negative_sampling_strategy,
-        )
-        head_smpl, tail_smpl = next(gen_step)
-        head_smpl_device = head_smpl.to(config.device)
-        tail_smpl_device = tail_smpl.to(config.device)
-        return gen_step, head_smpl_device, tail_smpl_device
-
-    def discriminator_step(self, h: torch.Tensor, r: torch.Tensor, t: torch.Tensor,
-                           emb_uniform_p: float, emb_uniform_scale: float,
-                           entity_uniform_sample_size: int,
-                           true_align_gamma: float, fake_align_gamma: float,
-                           emb_align_op: str, emb_align_balance: float,
-                           head_fake: torch.Tensor=None, tail_fake: torch.Tensor=None,
-                           return_fake_align: bool=False,
-        ) -> torch.Tensor:
-        """
-        KBGAN-level discriminator objective: pairwise true-vs-fake loss + embedding regularization.
-        """
-        h_device, r_device, t_device = h.to(config.device), r.to(config.device), t.to(config.device)
-        entity_ids_full = torch.arange(self.n_entity, device=config.device, dtype=torch.long)
-        
-        ent_uni_loss = loss.uniform_loss(
-            ids=entity_ids_full,
-            emb=self.discriminator.embed,
-            scale=emb_uniform_scale,
-            max_sample_size=entity_uniform_sample_size,
-        )
-        rel_uni_loss = loss.uniform_loss(
-            ids=r_device,
-            emb=self.discriminator.relation_embed,
-            scale=emb_uniform_scale
-        )
-        true_ali_loss = loss.align_loss(
-            head_ids=h_device,
-            relation_ids=r_device,
-            tail_ids=t_device,
-            entity_emb=self.discriminator.embed,
-            relation_emb=self.discriminator.relation_embed,
-            align_balance=emb_align_balance,
-            align_op=emb_align_op,
-        )
-        emb_reg_loss = true_align_gamma * true_ali_loss + emb_uniform_p * ent_uni_loss + (1.0 - emb_uniform_p) * rel_uni_loss
-
-        if head_fake is None or tail_fake is None:
-            return emb_reg_loss
-
-        head_fake_device = head_fake.to(config.device)
-        tail_fake_device = tail_fake.to(config.device)
-        if head_fake_device.dim() == r_device.dim() + 1:
-            relation_for_fake = r_device.unsqueeze(1).expand_as(head_fake_device)
-        else:
-            relation_for_fake = r_device
-
-        fake_ali_loss = loss.align_loss(
-            head_ids=head_fake_device,
-            relation_ids=relation_for_fake,
-            tail_ids=tail_fake_device,
-            entity_emb=self.discriminator.embed,
-            relation_emb=self.discriminator.relation_embed,
-            align_balance=emb_align_balance,
-            align_op=emb_align_op,
-        )
-        total_loss = emb_reg_loss - fake_align_gamma * fake_ali_loss
-        if return_fake_align:
-            return total_loss, fake_ali_loss.detach()
-        return total_loss
-
     def _run_validation_epoch(self,
                               epoch: int,
                               n_epoch: int,
@@ -300,7 +221,6 @@ class KBGAN():
                 negative_sampling_strategy: str='multinomial',
                 emb_uniform_p: float=0.5,
                 emb_uniform_scale: float=2.0,
-                entity_uniform_sample_size: int=4096,
                 true_align_gamma: float=1.0,
                 fake_align_gamma: float=1.0,
                 emb_align_op: str='add',
@@ -356,8 +276,6 @@ class KBGAN():
             raise ValueError("emb_align_op must be one of ['add', 'mul']")
         if not (0.0 <= emb_align_balance <= 1.0):
             raise ValueError("emb_align_balance must be in [0, 1]")
-        if entity_uniform_sample_size is not None and entity_uniform_sample_size <= 0:
-            raise ValueError("entity_uniform_sample_size must be > 0 or None")
 
         # [EARLY STOPPING]
         patience_counter = 0
@@ -372,33 +290,61 @@ class KBGAN():
             for h, r, t, hs, rs, ts in batch_by_num(n_batch, head, relation, tail, head_cand, relation_cand, tail_cand, n_sample=n_train):             
                 batch_size = h.size(0)
                 # --- KBGAN Generator Step ---
-                gen_step, head_smpl_device, tail_smpl_device = self.generator_step(
-                    hs=hs,
-                    rs=rs,
-                    ts=ts,
+                gen_step = self.generator.generator_step(
+                    hs, rs, ts,
                     n_sample=n_sample,
                     temperature=temperature,
-                    negative_sampling_strategy=negative_sampling_strategy,
+                    train=True,
+                    sampling_strategy=negative_sampling_strategy,
                 )
+                head_smpl, tail_smpl = next(gen_step)
+                head_smpl_device = head_smpl.to(config.device)
+                tail_smpl_device = tail_smpl.to(config.device)
 
                 # --- KBGAN Discriminator Step ---
-                emb_loss, fake_ali_loss_reward = self.discriminator_step(
-                    h=h,
-                    r=r,
-                    t=t,
-                    head_fake=head_smpl_device,
-                    tail_fake=tail_smpl_device,
-                    emb_uniform_p=emb_uniform_p,
-                    emb_uniform_scale=emb_uniform_scale,
-                    entity_uniform_sample_size=entity_uniform_sample_size,
-                    true_align_gamma=true_align_gamma,
-                    emb_align_op=emb_align_op,
-                    emb_align_balance=emb_align_balance,
-                    fake_align_gamma=fake_align_gamma,
-                    return_fake_align=True,
+                h_device, r_device, t_device = h.to(config.device), r.to(config.device), t.to(config.device)
+                # Use only entities present in current batch triples to keep uniform loss memory-bounded.
+                entity_ids_batch = torch.unique(torch.cat((h_device.reshape(-1), t_device.reshape(-1)), dim=0))
+                ent_uni_loss = loss.uniform_loss(
+                    ids=entity_ids_batch,
+                    emb=self.discriminator.embed,
+                    scale=emb_uniform_scale,
+                )
+                rel_uni_loss = loss.uniform_loss(
+                    ids=r_device,
+                    emb=self.discriminator.relation_embed,
+                    scale=emb_uniform_scale
+                )
+                true_ali_loss = loss.align_loss(
+                    head_ids=h_device,
+                    relation_ids=r_device,
+                    tail_ids=t_device,
+                    entity_emb=self.discriminator.embed,
+                    relation_emb=self.discriminator.relation_embed,
+                    align_balance=emb_align_balance,
+                    align_op=emb_align_op,
                 )
 
-                rewards_raw = -fake_align_gamma * fake_ali_loss_reward
+                if head_smpl_device.dim() == r_device.dim() + 1:
+                    relation_for_fake = r_device.unsqueeze(1).expand_as(head_smpl_device)
+                else:
+                    relation_for_fake = r_device
+
+                fake_ali_loss = loss.align_loss(
+                    head_ids=head_smpl_device,
+                    relation_ids=relation_for_fake,
+                    tail_ids=tail_smpl_device,
+                    entity_emb=self.discriminator.embed,
+                    relation_emb=self.discriminator.relation_embed,
+                    align_balance=emb_align_balance,
+                    align_op=emb_align_op,
+                )
+                emb_loss = emb_uniform_p * ent_uni_loss \
+                            + (1.0 - emb_uniform_p) * rel_uni_loss \
+                            + true_align_gamma * true_ali_loss \
+                            - fake_align_gamma * fake_ali_loss
+                rewards_raw = -fake_align_gamma * fake_ali_loss
+
                 reward_sum = float(torch.sum(rewards_raw).item())
                 rewards = rewards_raw - avg_reward
                 rewards_for_gen = rewards.unsqueeze(1) if rewards.dim() == 1 else rewards

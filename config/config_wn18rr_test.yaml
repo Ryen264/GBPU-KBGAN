@@ -16,11 +16,10 @@ KBGAN:
   negative_sampling_strategy: topk
   emb_uniform_p: 0.5
   emb_uniform_scale: 2.0
-  entity_uniform_sample_size: 4096
   true_align_gamma: 1.0
   fake_align_gamma: 1.0
   emb_align_op: 'add'
-  emb_align_balance: 0.5
+  emb_align_balance: 0.7
 TransE:
   optimizer: Adagrad
   learning_rate: 0.01
