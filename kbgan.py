@@ -329,12 +329,9 @@ class KBGAN():
                 emb_loss = uniform_loss_batch + true_pull + fake_push
 
                 # Generator reward: hard negatives are close to query => larger reward.
-                rewards_raw = -fake_dist_sq.detach()
-
+                # Keep rewards strictly out of the discriminator autograd graph.
+                rewards_raw = (-fake_dist_sq).detach()
                 reward_sum = float(torch.sum(rewards_raw).item())
-                rewards = rewards_raw - avg_reward
-                gen_step.send(rewards)
-                epoch_reward += reward_sum
 
                 # Optimizer Step
                 self.discriminator.opt_zero_grad()
@@ -342,6 +339,11 @@ class KBGAN():
 
                 # Apply entity embedding constraints (e.g. norm <= 1)
                 self.discriminator.opt_step()
+
+                # Update generator after discriminator update using detached rewards.
+                rewards = rewards_raw - avg_reward
+                gen_step.send(rewards)
+                epoch_reward += reward_sum
 
                 # Losses are batch means, so weight by batch size then divide by n_train at epoch end.
                 epoch_emb_loss += emb_loss.detach().item() * batch_size
