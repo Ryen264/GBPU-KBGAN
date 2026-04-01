@@ -15,6 +15,7 @@ def uniform_loss(
 	ids: torch.Tensor,
 	emb: Callable[[torch.Tensor], torch.Tensor],
 	scale: float = 2.0,
+	max_sample_size: int = None,
 	eps: float = 1e-12,
 	) -> torch.Tensor:
 	"""
@@ -24,11 +25,17 @@ def uniform_loss(
 		ids: Id batch.
 		emb: Embedding function.
 		scale: Distance scaling factor (default: 2.0).
+		max_sample_size: Optional cap on number of ids used for uniform loss.
+			If provided and len(ids) is larger, a random subset is used.
 		eps: Small value to avoid log(0).
 
 	Returns:
 		Scalar tensor loss.
 	"""
+	if max_sample_size is not None and max_sample_size > 0 and ids.numel() > max_sample_size:
+		perm = torch.randperm(ids.numel(), device=ids.device)[:max_sample_size]
+		ids = ids[perm]
+
 	z = emb(ids)
 	if z.dim() != 2:
 		z = z.view(z.size(0), -1)

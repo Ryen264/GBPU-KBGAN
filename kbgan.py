@@ -137,6 +137,7 @@ class KBGAN():
 
     def discriminator_step(self, h: torch.Tensor, r: torch.Tensor, t: torch.Tensor,
                            emb_uniform_p: float, emb_uniform_scale: float,
+                           entity_uniform_sample_size: int,
                            true_align_gamma: float, fake_align_gamma: float,
                            emb_align_op: str, emb_align_balance: float,
                            head_fake: torch.Tensor=None, tail_fake: torch.Tensor=None,
@@ -151,7 +152,8 @@ class KBGAN():
         ent_uni_loss = loss.uniform_loss(
             ids=entity_ids_full,
             emb=self.discriminator.embed,
-            scale=emb_uniform_scale
+            scale=emb_uniform_scale,
+            max_sample_size=entity_uniform_sample_size,
         )
         rel_uni_loss = loss.uniform_loss(
             ids=r_device,
@@ -298,6 +300,7 @@ class KBGAN():
                 negative_sampling_strategy: str='multinomial',
                 emb_uniform_p: float=0.5,
                 emb_uniform_scale: float=2.0,
+                entity_uniform_sample_size: int=4096,
                 true_align_gamma: float=1.0,
                 fake_align_gamma: float=1.0,
                 emb_align_op: str='add',
@@ -353,6 +356,8 @@ class KBGAN():
             raise ValueError("emb_align_op must be one of ['add', 'mul']")
         if not (0.0 <= emb_align_balance <= 1.0):
             raise ValueError("emb_align_balance must be in [0, 1]")
+        if entity_uniform_sample_size is not None and entity_uniform_sample_size <= 0:
+            raise ValueError("entity_uniform_sample_size must be > 0 or None")
 
         # [EARLY STOPPING]
         patience_counter = 0
@@ -385,6 +390,7 @@ class KBGAN():
                     tail_fake=tail_smpl_device,
                     emb_uniform_p=emb_uniform_p,
                     emb_uniform_scale=emb_uniform_scale,
+                    entity_uniform_sample_size=entity_uniform_sample_size,
                     true_align_gamma=true_align_gamma,
                     emb_align_op=emb_align_op,
                     emb_align_balance=emb_align_balance,
