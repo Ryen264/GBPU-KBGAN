@@ -1,105 +1,80 @@
 #!/bin/bash
 
-# KBGAN Training Script with nohup
-# This script runs the training process in the background and saves logs
-# Usage: ./run_process.sh [config_path] [mode] [extra_args]
-# Examples:
-#   ./run_process.sh                                    # Use defaults
-#   ./run_process.sh config/config_wn18rr.yaml          # Specific config with default mode
-#   ./run_process.sh config/config_wn18rr.yaml mode=full-train
-#   ./run_process.sh config/config_wn18rr.yaml mode=test-only
-#   ./run_process.sh config/config_wn18rr.yaml mode=full-train "--override KBGAN.n_epoch=1000"
+# KBGAN training launcher using nohup.
+# Usage:
+#   ./nohup/run_process.sh [config_path.yaml] [mode=...] [extra_args]
 
-set -e  # Exit on error
+set -euo pipefail
 
-# Ensure we're in the correct directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+cd "$ROOT_DIR"
 
-# Verify virtual environment exists
-if [ ! -f ".venv/bin/python" ]; then
-    echo "ERROR: Virtual environment not found. Create it first:"
+PYTHON_BIN="$ROOT_DIR/.venv/bin/python"
+if [[ ! -x "$PYTHON_BIN" ]]; then
+    echo "ERROR: Python virtual environment not found at $PYTHON_BIN"
+    echo "Create it first from project root:"
     echo "  python3 -m venv .venv"
     echo "  source .venv/bin/activate"
     echo "  pip install -r requirements.txt"
     exit 1
 fi
 
-# Set up log directory and filename
-LOG_DIR="./logs"
+LOG_DIR="$ROOT_DIR/logs/nohup"
+PID_FILE="$LOG_DIR/training.pid"
 mkdir -p "$LOG_DIR"
 
-TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-LOG_FILE="$LOG_DIR/training_${TIMESTAMP}.log"
-
-echo "Starting KBGAN training..."
-echo "Log file: $LOG_FILE"
-echo "Process will run in background with nohup"
-echo ""
-
-# Build command
-PYTHON="./.venv/bin/python"
-
-# Parse arguments intelligently
-# Supports (config path first is preferred):
-#   ./run_process.sh
-#   ./run_process.sh config/config_wn18rr.yaml
-#   ./run_process.sh config/config_wn18rr.yaml mode=full-train
-#   ./run_process.sh config/config_wn18rr.yaml mode=full-train "--override KBGAN.n_epoch=1000"
-# Backward compatible with mode first:
-#   ./run_process.sh mode=full-train
-#   ./run_process.sh full-train config/config_wn18rr.yaml
-
-CMD="$PYTHON main.py"
-EXTRA_ARGS=""
-
-# Check first argument
-if [ -n "$1" ]; then
-    if [[ "$1" == *.yaml ]]; then
-        # First arg is config path
-        CMD="$CMD $1"
-        shift
-    else
-        # First arg might be mode or other parameter
-        CMD="$CMD $1"
-        shift
+if [[ -f "$PID_FILE" ]]; then
+    existing_pid="$(cat "$PID_FILE")"
+    if [[ -n "$existing_pid" ]] && ps -p "$existing_pid" > /dev/null 2>&1; then
+        echo "A training process is already running (PID: $existing_pid)."
+        echo "Stop it first with: ./nohup/stop_process.sh"
+        exit 1
     fi
+    rm -f "$PID_FILE"
 fi
 
-# Check if next arg is a config path
-if [ -n "$1" ] && [[ "$1" == *.yaml ]]; then
-    CMD="$CMD $1"
-    shift
-fi
+config_path=""
+mode_arg=""
+extra_args=()
 
-# Collect remaining arguments as config overrides
-while [ -n "$1" ]; do
-    EXTRA_ARGS="$EXTRA_ARGS $1"
-    shift
+for arg in "$@"; do
+    if [[ -z "$config_path" && "$arg" == *.yaml ]]; then
+        config_path="$arg"
+    elif [[ -z "$mode_arg" && "$arg" == mode=* ]]; then
+        mode_arg="$arg"
+    else
+        extra_args+=("$arg")
+    fi
 done
 
-CMD="$CMD $EXTRA_ARGS"
-CMD=${CMD%% }  # Remove trailing spaces
+cmd=("$PYTHON_BIN" "$ROOT_DIR/main.py")
+if [[ -n "$config_path" ]]; then
+    cmd+=("$config_path")
+fi
+if [[ -n "$mode_arg" ]]; then
+    cmd+=("$mode_arg")
+fi
+if [[ ${#extra_args[@]} -gt 0 ]]; then
+    cmd+=("${extra_args[@]}")
+fi
 
-echo "Running command: $CMD"
-echo ""
+timestamp="$(date +"%Y%m%d_%H%M%S")"
+log_file="$LOG_DIR/training_${timestamp}.log"
 
-# Run training with nohup in background
-nohup $CMD > "$LOG_FILE" 2>&1 &
+echo "Starting KBGAN in background..."
+echo "Project root: $ROOT_DIR"
+echo "Log file: $log_file"
+echo "Command: ${cmd[*]}"
 
-# Save the process ID
-PID=$!
-echo $PID > "$LOG_DIR/training.pid"
+nohup "${cmd[@]}" > "$log_file" 2>&1 &
+pid=$!
 
-echo "✓ Training started with PID: $PID"
+echo "$pid" > "$PID_FILE"
+ln -sfn "$log_file" "$LOG_DIR/latest.log"
+
 echo ""
-echo "Monitor progress:"
-echo "  tail -f $LOG_FILE"
-echo ""
-echo "Check status:"
-echo "  ./check_process.sh"
-echo ""
-echo "Stop training:"
-echo "  ./stop_process.sh"
-echo ""
-echo "PID saved to: $LOG_DIR/training.pid"
+echo "Training started with PID: $pid"
+echo "Check status: ./nohup/check_process.sh"
+echo "Follow logs:  tail -f $LOG_DIR/latest.log"
+echo "Stop:         ./nohup/stop_process.sh"

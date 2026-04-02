@@ -80,24 +80,25 @@ This project implements KBGAN (Knowledge Base GAN), an adversarial learning fram
   - `<dataset>/<task>/models/`: Pretrained discriminator/generator models
   - `<dataset>/<task>/kbgan/`: KBGAN adversarial training checkpoints
 
-- **`logs/`** - Training logs and process management
-  - `training_YYYYMMDD_HHMMSS.log`: Timestamped training logs
+- **`logs/nohup/`** - Background training logs and process management
+  - `training_YYYYMMDD_HHMMSS.log`: Timestamped nohup logs
+  - `latest.log`: Symlink to the newest nohup log
   - `training.pid`: Process ID for background runs
 
 ### Process Management Scripts
 
-- **`run_process.sh`** - Start training in background with nohup
-  - Usage: `./run_process.sh [mode] [extra_args]`
-  - Example: `./run_process.sh full-train "--override KBGAN.n_epoch=1000"`
+- **`nohup/run_process.sh`** - Start training in background with nohup
+  - Usage: `./nohup/run_process.sh [config_path.yaml] [mode=...] [extra_args]`
+  - Example: `./nohup/run_process.sh config/config_wn18rr.yaml mode=full-train --override KBGAN.n_epoch=1000`
   - Creates timestamped log files and saves PID
 
-- **`check_process.sh`** - Monitor running training process
-  - Usage: `./check_process.sh [lines]`
+- **`nohup/check_process.sh`** - Monitor running training process
+  - Usage: `./nohup/check_process.sh [lines]`
   - Shows process status, runtime, and recent log output
   - Auto-cleans stale PID files
 
-- **`stop_process.sh`** - Stop running training process
-  - Usage: `./stop_process.sh [--force]`
+- **`nohup/stop_process.sh`** - Stop running training process
+  - Usage: `./nohup/stop_process.sh [--force]`
   - Graceful shutdown (SIGTERM) or forced kill (SIGKILL)
   - Fallback to finding processes by command name
 
@@ -204,47 +205,47 @@ For long-running training sessions, use the provided shell scripts:
 
 ```bash
 # Make scripts executable (first time only)
-chmod +x run_process.sh check_process.sh stop_process.sh
+chmod +x nohup/run_process.sh nohup/check_process.sh nohup/stop_process.sh
 
 # Start training with default config
-./run_process.sh
+./nohup/run_process.sh
 
 # Start with specific config file
-./run_process.sh config/config_wn18rr.yaml mode=full-train
-./run_process.sh config/config_fb15k237.yaml mode=full-train
-./run_process.sh config/config_wn18rr_test.yaml mode=full-train
+./nohup/run_process.sh config/config_wn18rr.yaml mode=full-train
+./nohup/run_process.sh config/config_fb15k237.yaml mode=full-train
+./nohup/run_process.sh config/config_wn18rr_test.yaml mode=full-train
 
 # Start with config and optional overrides
-./run_process.sh config/config_wn18rr.yaml mode=full-train "--override KBGAN.n_epoch=1000"
+./nohup/run_process.sh config/config_wn18rr.yaml mode=full-train --override KBGAN.n_epoch=1000
 ```
 
 **What happens:**
 - Training runs in background via `nohup`
-- Timestamped log file created: `logs/training_YYYYMMDD_HHMMSS.log`
-- Process ID saved to: `logs/training.pid`
+- Timestamped log file created: `logs/nohup/training_YYYYMMDD_HHMMSS.log`
+- Process ID saved to: `logs/nohup/training.pid`
 - Terminal can be closed without stopping training
 
 #### Monitor Training Progress
 
 ```bash
 # Check status and show last 30 lines of log
-./check_process.sh
+./nohup/check_process.sh
 
 # Show last 50 lines
-./check_process.sh 50
+./nohup/check_process.sh 50
 
 # Follow live log output
-tail -f logs/training_*.log  # Use the most recent log file
+tail -f logs/nohup/latest.log
 ```
 
 #### Stop Training
 
 ```bash
 # Graceful shutdown (recommended)
-./stop_process.sh
+./nohup/stop_process.sh
 
 # Force kill (if graceful fails)
-./stop_process.sh --force
+./nohup/stop_process.sh --force
 ```
 
 ---

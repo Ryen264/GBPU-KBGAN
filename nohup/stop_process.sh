@@ -1,99 +1,79 @@
 #!/bin/bash
 
-# Helper script to stop training process
-# Usage: ./stop_process.sh [--force]
-# Use --force for immediate kill (SIGKILL) instead of graceful shutdown
+# Stop background KBGAN run started by nohup/run_process.sh.
+# Usage: ./nohup/stop_process.sh [--force]
 
-# Ensure we're in the correct directory
+set -euo pipefail
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
-
-LOG_DIR="./logs"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+LOG_DIR="$ROOT_DIR/logs/nohup"
 PID_FILE="$LOG_DIR/training.pid"
-FORCE_KILL=${1:-}
+FORCE_KILL="${1:-}"
 
-# Function to stop by PID
 stop_by_pid() {
-    local pid=$1
-    local force=$2
-    
-    if ps -p $pid > /dev/null 2>&1; then
-        if [ "$force" = "--force" ]; then
-            echo "Force terminating process (PID: $pid)..."
-            kill -9 $pid
-            sleep 1
-        else
-            echo "Stopping training process gracefully (PID: $pid)..."
-            kill -TERM $pid
-            sleep 2
-        fi
-        
-        # Check if process is still running
-        if ps -p $pid > /dev/null 2>&1; then
-            if [ "$force" != "--force" ]; then
-                echo "Process still running after SIGTERM, forcing termination..."
-                kill -9 $pid
-                sleep 1
-            fi
-            
-            # Final check
-            if ps -p $pid > /dev/null 2>&1; then
-                echo "✗ ERROR: Failed to stop process $pid"
-                return 1
-            fi
-        fi
-        
-        echo "✓ Training process stopped successfully"
-        return 0
-    else
-        echo "✓ Process is not running (PID: $pid)"
+    local pid="$1"
+
+    if ! ps -p "$pid" > /dev/null 2>&1; then
+        echo "Process is not running (PID: $pid)"
         return 0
     fi
+
+    if [[ "$FORCE_KILL" == "--force" ]]; then
+        echo "Force killing PID: $pid"
+        kill -9 "$pid"
+        sleep 1
+    else
+        echo "Sending SIGTERM to PID: $pid"
+        kill -TERM "$pid"
+
+        for _ in {1..10}; do
+            if ! ps -p "$pid" > /dev/null 2>&1; then
+                break
+            fi
+            sleep 1
+        done
+
+        if ps -p "$pid" > /dev/null 2>&1; then
+            echo "PID $pid still alive, sending SIGKILL"
+            kill -9 "$pid"
+            sleep 1
+        fi
+    fi
+
+    if ps -p "$pid" > /dev/null 2>&1; then
+        echo "ERROR: Failed to stop PID $pid"
+        return 1
+    fi
+
+    echo "Stopped PID: $pid"
+    return 0
 }
 
-# Check if PID file exists
-if [ ! -f "$PID_FILE" ]; then
-    echo "⚠ No training process found. PID file does not exist: $PID_FILE"
-    echo ""
-    echo "Attempting fallback kill by command match..."
-    # Try to find any main.py process
-    PIDS=$(pgrep -f "main.py" || true)
-    if [ -n "$PIDS" ]; then
-        echo "Found processes: $PIDS"
-        for p in $PIDS; do
-            stop_by_pid $p $FORCE_KILL || true
-        done
-        exit 0
-    else
-        echo "No processes found matching 'main.py'"
-        exit 1
+stopped_any=0
+
+if [[ -f "$PID_FILE" ]]; then
+    pid="$(cat "$PID_FILE")"
+    if [[ -n "$pid" ]]; then
+        if stop_by_pid "$pid"; then
+            stopped_any=1
+        fi
     fi
+    rm -f "$PID_FILE"
 fi
 
-# Read PID
-PID=$(cat "$PID_FILE")
+# Fallback: find processes that match this repository's main.py
+mapfile -t fallback_pids < <(pgrep -f "$ROOT_DIR/main.py" || true)
+for p in "${fallback_pids[@]}"; do
+    if stop_by_pid "$p"; then
+        stopped_any=1
+    fi
+done
 
-# Try stopping the stored PID
-if stop_by_pid $PID $FORCE_KILL; then
-    rm -f "$PID_FILE"
-    echo ""
-    echo "PID file removed: $PID_FILE"
+if [[ "$stopped_any" -eq 1 ]]; then
+    echo "Background training process stopped."
     exit 0
 fi
 
-# If PID method failed, try to find a matching process and kill it (best-effort)
-echo ""
-echo "Attempting fallback kill by command match..."
-PIDS=$(pgrep -f "main.py" || true)
-if [ -n "$PIDS" ]; then
-    echo "Found processes: $PIDS"
-    for p in $PIDS; do
-        stop_by_pid $p $FORCE_KILL || true
-    done
-    rm -f "$PID_FILE"
-    exit 0
-else
-    echo "No fallback processes found matching 'main.py'"
-    rm -f "$PID_FILE"
-    exit 1
-fi
+echo "No matching background training process found."
+exit 1
