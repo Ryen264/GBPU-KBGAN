@@ -2,13 +2,14 @@ import torch
 import os
 import sys
 import time
+import logging
 from config import config, overwrite_config_with_args, logger_init, log_step
 from data_loader import index_entity_relation, graph_size, read_data
 from datasets import convert_data_to_no_label, sparse_heads_tails, inplace_shuffle
 from kbgan import KBGAN
 
 # ./main.py mode=<mode> [other optional args to overwrite config]
-MODE = 'full-train'  # full-train / gan-train / test-only
+MODE = 'full-train'  # full-train / gan-train / test_only
 DATASET = 'wn18rr'   # wn18rr / wn18 / fb15k237
 RANK_OPTIMIZING_METRIC = 'mrr'              # Metric to optimize for ranking evaluation (e.g., 'mrr', 'hits@1', etc.)
 RANK_FILT = True                            # Whether to apply filtering in ranking metrics evaluation
@@ -18,6 +19,18 @@ CLASS_USE_MAXGOOD_MINBAD_THRESHOLD = True   # Whether to use dynamic threshold b
 CLASS_TRUE_PERCENTILE = 90.0
 CLASS_FAKE_PERCENTILE = 5.0
 CLASS_TRUE_FAKE_BALANCE = 0.5
+
+
+def _log_metrics(title: str, metrics: dict) -> None:
+    parts = []
+    for key, value in metrics.items():
+        if isinstance(value, float):
+            parts.append(f"{key}={value:.4f}")
+        else:
+            parts.append(f"{key}={value}")
+    message = f"{title}: " + ", ".join(parts)
+    print(message)
+    logging.info(message)
 
 def main():
     # Check if config path is provided as first argument
@@ -87,8 +100,8 @@ def main():
     pretrained_dis_path = os.path.join('.', 'models', DATASET, working_task, 'components', dis_type + '.mdl')
     pretrained_gen_path = os.path.join('.', 'models', DATASET, working_task, 'components', gen_type + '.mdl')
 
-    # Assign or construct pretrained KBGAN's path for 'test-only' mode
-    pretrained_kbgan_path = os.path.join('.', 'models', DATASET, working_task, 'kbgan.mdl')
+    # Assign or construct pretrained KBGAN's path for test-only mode
+    pretrained_kbgan_path = os.path.join('.', 'models', DATASET, working_task, f'kbgan_dis-{dis_type}_gen-{gen_type}.mdl')
 
     t_total = time.perf_counter()
     # Init logging now that config is prepared
@@ -140,10 +153,12 @@ def main():
         print(f"Testing component on Link Prediction: {dis_type} discriminator")
         dis_ranking_metrics = model.discriminator.evaluate_on_ranking(test_data_no_label, heads, tails,
                                                                     filt=RANK_FILT, k_list=RANK_K_LIST)
+        _log_metrics("Discriminator link prediction", dis_ranking_metrics)
         
         print(f"Testing component on Link Prediction: {gen_type} generator")
         gen_ranking_metrics = model.generator.evaluate_on_ranking(test_data_no_label, heads, tails,
                                                                 filt=RANK_FILT, k_list=RANK_K_LIST)
+        _log_metrics("Generator link prediction", gen_ranking_metrics)
 
         t_step = log_step("Component link prediction eval", t_step)
         print("----------------")
@@ -152,11 +167,13 @@ def main():
         print(f"Testing component on Triple Classification: {dis_type} discriminator")
         dis_classification_metrics = model.discriminator.evaluate_on_classification(test_data_with_labels,
                                                                                     optimizing_metric=CLASS_OPTIMIZING_METRIC, is_threshold_tunning=False)
+        _log_metrics("Discriminator triple classification", dis_classification_metrics)
         print(f"Classification threshold for Discriminator: {model.discriminator.classification_threshold}")
 
         print(f"Testing component on Triple Classification: {gen_type} generator")
         gen_classification_metrics = model.generator.evaluate_on_classification(test_data_with_labels,
                                                                                 optimizing_metric=CLASS_OPTIMIZING_METRIC, is_threshold_tunning=False)
+        _log_metrics("Generator triple classification", gen_classification_metrics)
         print(f"Classification threshold for Generator: {model.generator.classification_threshold}")
 
         t_step = log_step("Component triple classification eval", t_step)
@@ -269,30 +286,51 @@ def main():
         if working_task == 'link-prediction' or working_task == 'all':
             link_prediction_metrics = model.evaluate_on_link_prediction(heads, tails, test_data_no_label,
                                                                         filt=RANK_FILT, k_list=RANK_K_LIST)
+            _log_metrics("KBGAN link prediction", link_prediction_metrics)
             t_step = log_step("KBGAN link prediction eval", t_step)
 
         if working_task == 'triple-classification' or working_task == 'all':
             triple_classification_metrics = model.evaluate_on_triple_classification(test_data_with_labels,
                                                                                     optimizing_metric=CLASS_OPTIMIZING_METRIC, use_maxgood_minbad_threshold=CLASS_USE_MAXGOOD_MINBAD_THRESHOLD)
+            _log_metrics("KBGAN triple classification", triple_classification_metrics)
             t_step = log_step("KBGAN triple classification eval", t_step)
         print("----------------")
-    elif MODE == 'test-only':
-        # Load pretrained KBGAN
+    elif MODE == 'test_only':
+        # Load pretrained KBGAN checkpoint before evaluating both tasks
+        pretrained_kbgan_path = os.path.join('.', 'models', 'wn18rr', 'all', f'kbgan_dis-{dis_type}_gen-{gen_type}.mdl')
+        print(f"Loading pretrained KBGAN from: {pretrained_kbgan_path}")
         model.load_kbgan(pretrained_kbgan_path)
         print("----------------")
+
+        if working_task in ('triple-classification', 'all'):
+            if model.discriminator.classification_threshold is None and model.discriminator.global_threshold is None:
+                print("Tuning classification threshold on validation set...")
+                model.discriminator.evaluate_on_classification(
+                    valid_data_with_labels,
+                    optimizing_metric=CLASS_OPTIMIZING_METRIC,
+                    is_threshold_tunning=True,
+                )
+                model.save_kbgan(pretrained_kbgan_path)
+                print(f"Saved tuned threshold back to: {pretrained_kbgan_path}")
+            else:
+                print("Using classification threshold restored from checkpoint.")
+            print(f"Classification threshold for Discriminator: {model.discriminator.classification_threshold}")
+            print("----------------")
 
         # Test KBGAN on task
         if working_task == 'link-prediction' or working_task == 'all':
             link_prediction_metrics = model.evaluate_on_link_prediction(heads, tails, test_data_no_label,
                                                                         filt=RANK_FILT, k_list=RANK_K_LIST)
+            _log_metrics("KBGAN link prediction", link_prediction_metrics)
 
         if working_task == 'triple-classification' or working_task == 'all':
             triple_classification_metrics = model.evaluate_on_triple_classification(test_data_with_labels,
                                                                                     optimizing_metric=CLASS_OPTIMIZING_METRIC, use_maxgood_minbad_threshold=CLASS_USE_MAXGOOD_MINBAD_THRESHOLD)
+            _log_metrics("KBGAN triple classification", triple_classification_metrics)
             t_step = log_step("KBGAN triple classification eval", t_step)
         print("----------------")
     else: 
-        print("Invalid mode. Please try again and specify a mode: full-train / gan-train / test-only") 
+        print("Invalid mode. Please try again and specify a mode: full-train / gan-train / test_only") 
     total_elapsed = time.perf_counter() - t_total
     print(f"[TIMER] Total runtime: {total_elapsed:.2f}s")
 
