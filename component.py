@@ -73,6 +73,16 @@ class Component:
             f"n_entity={self.n_entity}, n_relation={self.n_relation}."
         )
 
+    def _stateful_module(self):
+        """Return the object that actually owns model parameters for checkpoint IO."""
+        if hasattr(self.model, "state_dict") and hasattr(self.model, "load_state_dict"):
+            return self.model
+        if hasattr(self.model, "model") and hasattr(self.model.model, "state_dict") and hasattr(self.model.model, "load_state_dict"):
+            return self.model.model
+        raise AttributeError(
+            f"{type(self.model).__name__} does not expose state_dict/load_state_dict and has no compatible .model attribute."
+        )
+
     def load(self, model_path: str) -> None:
         if self.n_entity is None or self.n_relation is None:
             raise ValueError("Component must be fitted before being loaded!")
@@ -90,24 +100,27 @@ class Component:
         self.global_threshold = None
         self.relation_thresholds = {}
         self.best_threshold_perf = {}
+        stateful_model = self._stateful_module()
 
         if isinstance(checkpoint, dict) and ("state_dict" in checkpoint or "model_state_dict" in checkpoint):
             state_dict = checkpoint.get("state_dict", checkpoint.get("model_state_dict"))
-            self.model.load_state_dict(state_dict)
+            stateful_model.load_state_dict(state_dict)
             self.classification_threshold = checkpoint.get("classification_threshold")
             self.global_threshold = checkpoint.get("global_threshold")
             self.relation_thresholds = checkpoint.get("relation_thresholds", {}) or {}
             self.best_threshold_perf = checkpoint.get("best_threshold_perf", {}) or {}
         else:
-            self.model.load_state_dict(checkpoint)
+            stateful_model.load_state_dict(checkpoint)
         print(f"Loaded component successfully by: {model_path}")
 
     def save(self, model_path: str = None):
         if model_path is None:
             model_path = self.model.model_path
 
+        stateful_model = self._stateful_module()
+
         checkpoint = {
-            "state_dict": self.model.state_dict(),
+            "state_dict": stateful_model.state_dict(),
             "classification_threshold": self.classification_threshold,
             "global_threshold": self.global_threshold,
             "relation_thresholds": self.relation_thresholds,
