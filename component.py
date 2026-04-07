@@ -54,14 +54,15 @@ class Component:
 
         self.n_entity = n_entity
         self.n_relation = n_relation
+        self.use_relation_attention = (self.role == "discriminator")
         if self.model_type == "TransE":
-            self.model = TransE(self.n_entity, self.n_relation)
+            self.model = TransE(self.n_entity, self.n_relation, use_relation_attention=self.use_relation_attention)
         elif self.model_type == "TransD":
-            self.model = TransD(self.n_entity, self.n_relation)
+            self.model = TransD(self.n_entity, self.n_relation, use_relation_attention=self.use_relation_attention)
         elif self.model_type == "DistMult":
-            self.model = DistMult(self.n_entity, self.n_relation)
+            self.model = DistMult(self.n_entity, self.n_relation, use_relation_attention=self.use_relation_attention)
         elif self.model_type == "ComplEx":
-            self.model = ComplEx(self.n_entity, self.n_relation)
+            self.model = ComplEx(self.n_entity, self.n_relation, use_relation_attention=self.use_relation_attention)
 
         self.model_path = self.model.model_path
         self.classification_threshold = None
@@ -78,14 +79,14 @@ class Component:
             raise ValueError("Component must be fitted before being loaded!")
 
         if self.model_type == "TransE":
-            self.model = TransE(self.n_entity, self.n_relation)
+            self.model = TransE(self.n_entity, self.n_relation, use_relation_attention=self.use_relation_attention)
         elif self.model_type == "TransD":
-            self.model = TransD(self.n_entity, self.n_relation)
+            self.model = TransD(self.n_entity, self.n_relation, use_relation_attention=self.use_relation_attention)
         elif self.model_type == "DistMult":
-            self.model = DistMult(self.n_entity, self.n_relation)
+            self.model = DistMult(self.n_entity, self.n_relation, use_relation_attention=self.use_relation_attention)
         elif self.model_type == "ComplEx":
-            self.model = ComplEx(self.n_entity, self.n_relation)
-        checkpoint = torch.load(model_path, map_location=config.device)
+            self.model = ComplEx(self.n_entity, self.n_relation, use_relation_attention=self.use_relation_attention)
+        checkpoint = torch.load(model_path, map_location=config.device, weights_only=False)
         self.classification_threshold = None
         self.global_threshold = None
         self.relation_thresholds = {}
@@ -95,13 +96,19 @@ class Component:
             "state_dict" in checkpoint or "model_state_dict" in checkpoint
         ):
             state_dict = checkpoint.get("state_dict", checkpoint.get("model_state_dict"))
-            self.model.load_state_dict(state_dict)
             self.classification_threshold = checkpoint.get("classification_threshold")
             self.global_threshold = checkpoint.get("global_threshold")
             self.relation_thresholds = checkpoint.get("relation_thresholds", {}) or {}
             self.best_threshold_perf = checkpoint.get("best_threshold_perf", {}) or {}
         else:
-            self.model.load_state_dict(checkpoint)
+            state_dict = checkpoint
+
+        model_state_keys = set(self.model.model.state_dict().keys())
+        checkpoint_keys = set(state_dict.keys())
+        has_attention = any(key.startswith("relation_attention.") for key in model_state_keys)
+        checkpoint_has_attention = any(key.startswith("relation_attention.") for key in checkpoint_keys)
+        strict = has_attention == checkpoint_has_attention
+        self.model.model.load_state_dict(state_dict, strict=strict)
         print(f"Loaded component successfully by: {model_path}")
 
     def save(self, model_path: str = None):
@@ -109,7 +116,7 @@ class Component:
             model_path = self.model.model_path
 
         checkpoint = {
-            "state_dict": self.model.state_dict(),
+            "state_dict": self.model.model.state_dict(),
             "classification_threshold": self.classification_threshold,
             "global_threshold": self.global_threshold,
             "relation_thresholds": self.relation_thresholds,
@@ -162,6 +169,12 @@ class Component:
             )
         raise AttributeError("Model does not expose supported relation embedding layers.")
 
+    def relation_attention(self, relation_ids: torch.Tensor) -> torch.Tensor:
+        model_module = self.model.model
+        if hasattr(model_module, "relation_attention") and model_module.relation_attention is not None:
+            return model_module.relation_attention(relation_ids)
+        raise AttributeError("Model does not expose relation attention weights.")
+
     def _directau_align_params(self) -> tuple[str, float]:
         kbgan_cfg = config._config["KBGAN"]
         align_op = kbgan_cfg.get("emb_align_op", "add")
@@ -180,6 +193,7 @@ class Component:
             tail_ids=tail_ids,
             entity_emb=self.embed,
             relation_emb=self.relation_embed,
+            attention_emb=self.relation_attention if self.use_relation_attention else None,
             align_balance=align_balance,
             align_op=align_op,
         )
@@ -271,6 +285,7 @@ class Component:
                     tail_ids=t_device,
                     entity_emb=self.embed,
                     relation_emb=self.relation_embed,
+                    attention_emb=self.relation_attention if self.use_relation_attention else None,
                     align_balance=align_balance,
                     align_op=align_op,
                 )
@@ -697,7 +712,7 @@ class Component:
         for k, v in classification_metrics.items():
             label = label_map.get(k, k)
             parts.append(f"{label}: {v:.4f}")
-        classification_metrics_str = f"Classification metrics: {', '.join(parts)}\n"
+        classification_metrics_str = f"Classification metrics: {', '.join(parts)}"
 
         threshold_source = None
         if external_threshold is not None:

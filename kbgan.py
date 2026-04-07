@@ -1,42 +1,14 @@
 import os
 import logging
+import time
 import torch
 from typing import Tuple
 import numpy as np
-from datetime import datetime
 
 from datasets import batch_by_num, batch_by_size, BernCorrupterMulti
 from component import Component
 import loss
 import config
-
-def _safe_stats(name: str, values: list) -> dict:
-    """Return robust distribution stats for a list of float scores."""
-    if len(values) == 0:
-        return {
-            "name": name,
-            "n_sample": 0,
-            "min": None,
-            "max": None,
-            "mean": None,
-            "median": None,
-            "std": None,
-            "percentiles": {}
-        }
-
-    arr = np.asarray(values, dtype=np.float64)
-    percentile_points = [1, 5, 10, 25, 50, 75, 90, 95, 99]
-
-    return {
-        "name": name,
-        "n_sample": int(arr.size),
-        "min": float(np.min(arr)),
-        "max": float(np.max(arr)),
-        "mean": float(np.mean(arr)),
-        "median": float(np.median(arr)),
-        "std": float(np.std(arr)),
-        "percentiles": {p: float(np.percentile(arr, p)) for p in percentile_points},
-    }
 
 class KBGAN():
     def __init__(self, discriminator_type: str, generator_type: str, n_entity: int, n_relation: int):
@@ -65,6 +37,87 @@ class KBGAN():
         self.model_name = 'kbgan_' + 'dis-' + self.discriminator_type + '_gen-' + self.generator_type + '.mdl'
         self.kbgan_path = os.path.join(self.task_dir, self.model_name)
         self.optimal_threshold = None
+        self.best_validation_perf = None
+        self.final_validation_perf = None
+        self.best_validation_epoch = None
+        self.training_time_seconds = None
+        self.latest_validation_analysis_path = None
+
+    def _score_summary_lines(self, title: str, scores: list) -> list:
+        lines = [title]
+        if len(scores) == 0:
+            lines.extend([
+                '  n_sample: 0',
+                '  min: N/A',
+                '  max: N/A',
+                '  mean: N/A',
+                '  median: N/A',
+                '  std: N/A',
+                '  percentiles: N/A',
+            ])
+            return lines
+
+        values = np.asarray(scores, dtype=np.float64)
+        percentiles = np.percentile(values, [1, 5, 10, 25, 50, 75, 90, 95, 99])
+        lines.extend([
+            f'  n_sample: {values.size}',
+            f'  min: {values.min():.6f}',
+            f'  max: {values.max():.6f}',
+            f'  mean: {values.mean():.6f}',
+            f'  median: {np.median(values):.6f}',
+            f'  std: {values.std():.6f}',
+            '  percentiles: '
+            f'p1={percentiles[0]:.6f}, p5={percentiles[1]:.6f}, p10={percentiles[2]:.6f}, '
+            f'p25={percentiles[3]:.6f}, p50={percentiles[4]:.6f}, p75={percentiles[5]:.6f}, '
+            f'p90={percentiles[6]:.6f}, p95={percentiles[7]:.6f}, p99={percentiles[8]:.6f}',
+        ])
+        return lines
+
+    def _write_validation_score_analysis(self, valid_data_w_label: tuple) -> str:
+        if len(valid_data_w_label) < 4:
+            return None
+
+        heads_list, relations_list, tails_list, labels = valid_data_w_label
+        positive_scores = []
+        negative_scores = []
+
+        with torch.no_grad():
+            for batch_head, batch_relation, batch_tail, batch_label in batch_by_size(
+                self.discriminator.model.test_batch_size,
+                heads_list,
+                relations_list,
+                tails_list,
+                labels,
+            ):
+                head_var = torch.LongTensor(batch_head).to(config.device)
+                relation_var = torch.LongTensor(batch_relation).to(config.device)
+                tail_var = torch.LongTensor(batch_tail).to(config.device)
+                batch_distances = self.discriminator._distance_score(head_var, relation_var, tail_var).detach().cpu().tolist()
+                for distance_value, label_value in zip(batch_distances, batch_label):
+                    if int(label_value) == 1:
+                        positive_scores.append(float(distance_value))
+                    else:
+                        negative_scores.append(float(distance_value))
+
+        log_dir = os.path.join('.', 'logs', self.dataset, self.task)
+        os.makedirs(log_dir, exist_ok=True)
+        timestamp = time.strftime('%y%m%d-%H%M%S')
+        log_path = os.path.join(log_dir, f'valid_score_analysis_{timestamp}.txt')
+
+        lines = [
+            'VALID SCORE ANALYSIS (LATEST)',
+            f'valid_time: {timestamp}',
+            '',
+        ]
+        lines.extend(self._score_summary_lines('POS_SCORE', positive_scores))
+        lines.append('')
+        lines.extend(self._score_summary_lines('NEG_SCORE', negative_scores))
+
+        with open(log_path, 'w', encoding='utf-8') as log_file:
+            log_file.write('\n'.join(lines).rstrip() + '\n')
+
+        logging.info('Wrote latest validation score analysis to %s', log_path)
+        return log_path
 
     def load_discriminator(self, filepath: str) -> None:
         self.discriminator.load(filepath)
@@ -123,33 +176,7 @@ class KBGAN():
                               rank_filt: bool,
                               rank_k_list: list,
                               class_optimizing_metric: str,
-                              class_use_maxgood_minbad_threshold: bool,
-                              n_generated_valid_negative: int,
-                              class_true_percentile: float,
-                              class_fake_percentile: float,
-                              class_true_fake_balance: float,
         ) -> float:
-        # [VALID LOSS SNAPSHOT]
-        if len(valid_data_w_label) >= 4:
-            valid_head_all, valid_relation_all, valid_tail_all, valid_label_all = valid_data_w_label
-            valid_labels_np = np.asarray(valid_label_all)
-            valid_pos_mask = (valid_labels_np == 1)
-            if np.any(valid_pos_mask):
-                valid_head_eval = torch.LongTensor(np.asarray(valid_head_all)[valid_pos_mask].astype(np.int64))
-                valid_relation_eval = torch.LongTensor(np.asarray(valid_relation_all)[valid_pos_mask].astype(np.int64))
-                valid_tail_eval = torch.LongTensor(np.asarray(valid_tail_all)[valid_pos_mask].astype(np.int64))
-            else:
-                valid_head_eval, valid_relation_eval, valid_tail_eval = valid_data_w_label[:3]
-        else:
-            valid_head_eval, valid_relation_eval, valid_tail_eval = valid_data_w_label[:3]
-
-        if not isinstance(valid_head_eval, torch.Tensor):
-            valid_head_eval = torch.LongTensor(valid_head_eval)
-        if not isinstance(valid_relation_eval, torch.Tensor):
-            valid_relation_eval = torch.LongTensor(valid_relation_eval)
-        if not isinstance(valid_tail_eval, torch.Tensor):
-            valid_tail_eval = torch.LongTensor(valid_tail_eval)
-
         # [RANK TASK]
         valid_data_no_label = valid_data_w_label[:3]
         rank_metrics = self.discriminator.evaluate_on_ranking(
@@ -160,12 +187,14 @@ class KBGAN():
             k_list=rank_k_list,
         )
 
-        # [CLASS TASK]
+        # [CLASS TASK] - v4: Unaugmented Validation
+        # IMPORTANT: Validation MUST use strictly unaugmented data (1:1 positive:negative ratio).
+        # This ensures learned thresholds perfectly generalize to standard test set.
         if do_class_task:
-            # Stage-2: always tune relation-specific thresholds on validation set,
-            # with global fallback handled by Component.evaluate_on_classification.
+            class_data_w_label = valid_data_w_label
+
             class_metrics = self.discriminator.evaluate_on_classification(
-                valid_data_w_label,
+                class_data_w_label,
                 optimizing_metric=class_optimizing_metric,
                 is_threshold_tunning=True,
                 external_threshold=None,
@@ -180,6 +209,8 @@ class KBGAN():
             test_perf = rank_metrics[rank_optimizing_metric]
             log_msg = f"Valid epoch {epoch + 1}/{n_epoch}, perf={test_perf}"
         logging.info(log_msg)
+        if do_class_task:
+            self.latest_validation_analysis_path = self._write_validation_score_analysis(class_data_w_label)
         return test_perf
 
     def train_kbgan(self, heads: torch.Tensor, tails: torch.Tensor, train_data: tuple, valid_data_w_label: tuple,
@@ -191,33 +222,31 @@ class KBGAN():
                 n_epoch: int=5000,
                 n_batch: int=100,
                 epoch_per_test: int=100,
-                n_generated_valid_negative: int=0,
                 negative_sampling_strategy: str='multinomial',
                 emb_uniform_scale: float=2.0,
                 entity_uniform_max_ids: int=2048,
                 uniform_gamma: float=1.0,
                 true_align_gamma: float=1.0,
                 fake_align_gamma: float=1.0,
-                dens_beta: float=0.0,
+                safe_margin: float=1.0,
                 emb_align_op: str='add',
                 emb_align_balance: float=0.7,
+                alpha: float=None,
+                uniform_lambda: float=None,
                 rank_optimizing_metric: str='mrr',
                 rank_filt: bool=True,
                 rank_k_list: list=[1, 3, 10],
                 class_optimizing_metric: str='accuracy',
-                class_use_maxgood_minbad_threshold: bool=True,
-                class_true_percentile: float=90.0,
-                class_fake_percentile: float=5.0,
-                class_true_fake_balance: float=0.5,
                 ) -> float:
         """
         class_rank_balance is a ratio in [0, 1]:
         - 0.0 => optimize ranking only
         - 1.0 => optimize classification only
 
-        Embedding-driven objective used for discriminator update:
-        - total_loss(X, Y) = l_uniform(X, Y) + gamma * l_align(X, Y)
-        - X/Y are entity-id batches from positive triples (head, tail)
+        Embedding-driven objective used for discriminator update (v4 Bounded Hybrid):
+        - L_align = ||q - e_t||_2^2
+        - L_fake = alpha * max(0, mu - ||q - e_t'||_2^2)
+        - total_loss = L_align + L_fake + lambda * L_uni
 
         negative_sampling_strategy:
         - 'multinomial': sample negatives from generator distribution
@@ -227,9 +256,22 @@ class KBGAN():
         - 'add': f(e, r) = e + r
         - 'mul': f(e, r) = e * r (element-wise)
 
-        fake_align_gamma:
-        - scales repulsion from generated fake triples via (-fake align loss)
+        safe_margin (mu):
+        - bounded margin threshold for fake negatives; prevents neighborhood shattering
+        - once fake tail pushed past margin, discriminator stops pushing
         """
+        config.overwrite_config_with_args([
+            f"--log.prefix=KBGAN_{self.discriminator_type}_{self.generator_type}_"
+        ])
+        config.logger_init()
+
+        if alpha is not None:
+            fake_align_gamma = alpha
+        if uniform_lambda is not None:
+            uniform_gamma = uniform_lambda
+
+        train_start = time.perf_counter()
+
         if not isinstance(train_data[0], torch.Tensor):
             train_data = [torch.LongTensor(vec) for vec in train_data]
         if not isinstance(valid_data_w_label[0], torch.Tensor):
@@ -243,7 +285,8 @@ class KBGAN():
         head, relation, tail = train_data
         n_train = len(head)
         best_perf = 0.0
-        avg_reward = 0.0
+        baseline_reward = 0.0
+        last_validation_perf = None
 
         # Keep this flag for validation-time metric computation/model selection only.
         do_class_task = (class_rank_balance > 0.0)
@@ -256,8 +299,8 @@ class KBGAN():
             raise ValueError("entity_uniform_max_ids must be >= 2 or None")
         if uniform_gamma < 0.0:
             raise ValueError("uniform_gamma must be >= 0")
-        if dens_beta < 0.0:
-            raise ValueError("dens_beta must be >= 0")
+        if safe_margin <= 0.0:
+            raise ValueError("safe_margin must be > 0")
 
         # [EARLY STOPPING]
         patience_counter = 0
@@ -266,6 +309,7 @@ class KBGAN():
             # [ORIGINAL KBGAN]
             epoch_emb_loss = 0.0
             epoch_reward = 0.0
+            baseline_reward = 0.0
 
             # [ORIGINAL KBGAN]
             head_cand, relation_cand, tail_cand = corrupter.corrupt(head, relation, tail, keep_truth=False)
@@ -301,6 +345,7 @@ class KBGAN():
                     tail_ids=t_device,
                     entity_emb=self.discriminator.embed,
                     relation_emb=self.discriminator.relation_embed,
+                    attention_emb=self.discriminator.relation_attention,
                     align_balance=emb_align_balance,
                     align_op=emb_align_op,
                 )
@@ -316,31 +361,30 @@ class KBGAN():
                     tail_ids=tail_smpl_device,
                     entity_emb=self.discriminator.embed,
                     relation_emb=self.discriminator.relation_embed,
+                    attention_emb=self.discriminator.relation_attention,
                     align_balance=emb_align_balance,
                     align_op=emb_align_op,
                 )
 
-                # DirectAU-style discriminator objective:
-                # true pull + fake push (exp decay) + batch uniformity.
+                # v4 Bounded Margin Discriminator Loss:
+                # true pull (L_align) + bounded fake push (L_fake) + batch uniformity.
                 uniform_loss_batch = ent_uni_loss
                 true_pull = true_align_gamma * true_dist_sq.mean()
-                fake_push = fake_align_gamma * torch.exp(-fake_dist_sq).mean()
-                emb_loss = true_pull + fake_push + uniform_gamma * uniform_loss_batch
+                # Bounded margin: max(0, mu - ||q - e_t'||_2^2)
+                # Once fake is pushed past safe_margin, discriminator stops pushing (no neighborhood shattering).
+                fake_push = fake_align_gamma * torch.clamp(safe_margin - fake_dist_sq, min=0).mean()
+                emb_loss = true_pull + fake_push + uniform_gamma * (uniform_loss_batch / max(1, batch_size))
 
-                # DENS reward: query-fooling term + factor-aware hardness term.
-                tail_true_emb = torch.nn.functional.normalize(self.discriminator.embed(t_device), p=2, dim=-1)
-                tail_fake_emb = torch.nn.functional.normalize(self.discriminator.embed(tail_smpl_device), p=2, dim=-1)
-                if tail_fake_emb.dim() == tail_true_emb.dim() + 1:
-                    tail_true_for_fake = tail_true_emb.unsqueeze(1).expand_as(tail_fake_emb)
-                else:
-                    tail_true_for_fake = tail_true_emb
-                tail_hardness_dist_sq = (tail_true_for_fake - tail_fake_emb).pow(2).sum(dim=-1)
-                rewards_raw = -fake_dist_sq.detach() - dens_beta * tail_hardness_dist_sq.detach()
+                # Organic Generator Reward (v4):
+                # Pure query-fooling term: -||q - e_t'||_2^2
+                # Removed DENS factor-aware hardness to prevent artificial negative overlap.
+                rewards_raw = -fake_dist_sq.detach()
 
                 reward_sum = float(torch.sum(rewards_raw).item())
-                rewards = rewards_raw - avg_reward
+                rewards = rewards_raw - baseline_reward
                 gen_step.send(rewards)
                 epoch_reward += reward_sum
+                baseline_reward = float(rewards_raw.mean().item()) if rewards_raw.numel() > 0 else 0.0
 
                 # Optimizer Step
                 self.discriminator.opt_zero_grad()
@@ -376,16 +420,14 @@ class KBGAN():
                     rank_filt=rank_filt,
                     rank_k_list=rank_k_list,
                     class_optimizing_metric=class_optimizing_metric,
-                    class_use_maxgood_minbad_threshold=class_use_maxgood_minbad_threshold,
-                    n_generated_valid_negative=n_generated_valid_negative,
-                    class_true_percentile=class_true_percentile,
-                    class_fake_percentile=class_fake_percentile,
-                    class_true_fake_balance=class_true_fake_balance,
+
                 )
+                last_validation_perf = test_perf
 
                 # [ORIGINAL KBGAN]
                 if test_perf > best_perf:
                     best_perf = test_perf
+                    self.best_validation_epoch = epoch + 1
                     self.save_kbgan()
                     print(f"Saved KBGAN at epoch {epoch + 1} with performance: {best_perf}")
 
@@ -398,172 +440,11 @@ class KBGAN():
                 if early_stop_patience > 0 and patience_counter >= early_stop_patience:
                     logging.info(f"Early stopping triggered at epoch {epoch + 1} (patience={early_stop_patience})")
                     break
+            self.best_validation_perf = best_perf
+            self.final_validation_perf = last_validation_perf if last_validation_perf is not None else best_perf
+            self.training_time_seconds = time.perf_counter() - train_start
         print(f'Trained KBGAN successfully: {self.generator_type} generator, {self.discriminator_type} discriminator.')
         return best_perf
-
-    def _compute_midpoint_threshold_from_labeled_data(self, data_w_label: tuple,
-                                                    n_generated_valid_negative: int=0, temperature: float=1.0,
-                                                    true_percentile: float=90.0, fake_percentile: float=5.0,
-                                                    true_fake_balance: float=0.5) -> float:
-        """
-        Compute midpoint threshold from labeled triples (and optional generator negatives)
-        using percentile statistics:
-        threshold = balance * percentile(true scores, true_percentile)
-              + (1-balance) * percentile(fake scores, fake_percentile).
-        """
-        if len(data_w_label) < 4:
-            return None
-        
-        if not (0.0 <= true_percentile <= 100.0):
-            raise ValueError("true_percentile must be in [0, 100].")
-        if not (0.0 <= fake_percentile <= 100.0):
-            raise ValueError("fake_percentile must be in [0, 100].")
-
-        heads_list, relations_list, tails_list, labels = data_w_label
-        pos_scores = []
-        neg_scores = []
-
-        with torch.no_grad():
-            for batch_head, batch_relation, batch_tail, batch_label in batch_by_size(
-                self.discriminator.model.test_batch_size, heads_list, relations_list, tails_list, labels
-            ):
-                head_var = torch.LongTensor(batch_head).to(config.device)
-                relation_var = torch.LongTensor(batch_relation).to(config.device)
-                tail_var = torch.LongTensor(batch_tail).to(config.device)
-
-                # Unified threshold semantics: lower score => more likely positive.
-                batch_scores = self.discriminator.score(head_var, relation_var, tail_var).detach().cpu().numpy()
-                batch_labels = np.asarray(batch_label)
-
-                pos_mask = (batch_labels == 1)
-                neg_mask = (batch_labels == 0)
-
-                if np.any(pos_mask):
-                    pos_scores.extend(batch_scores[pos_mask].reshape(-1).tolist())
-
-                if np.any(neg_mask):
-                    neg_scores.extend(batch_scores[neg_mask].reshape(-1).tolist())
-
-        if n_generated_valid_negative > 0:
-            labels_array = np.asarray(labels)
-            pos_mask_all = (labels_array == 1)
-            if np.any(pos_mask_all):
-                pos_heads = np.asarray(heads_list)[pos_mask_all].astype(np.int64)
-                pos_relations = np.asarray(relations_list)[pos_mask_all].astype(np.int64)
-                pos_tails = np.asarray(tails_list)[pos_mask_all].astype(np.int64)
-
-                pos_head_tensor = torch.LongTensor(pos_heads)
-                pos_relation_tensor = torch.LongTensor(pos_relations)
-                pos_tail_tensor = torch.LongTensor(pos_tails)
-
-                valid_corrupter = BernCorrupterMulti(
-                    (pos_heads.tolist(), pos_relations.tolist(), pos_tails.tolist()),
-                    self.n_entity,
-                    self.n_relation,
-                    n_generated_valid_negative,
-                )
-                cand_head, cand_relation, cand_tail = valid_corrupter.corrupt(
-                    pos_head_tensor,
-                    pos_relation_tensor,
-                    pos_tail_tensor,
-                    keep_truth=False,
-                )
-
-                with torch.no_grad():
-                    for _, batch_relation, _, batch_hs, batch_rs, batch_ts in batch_by_size(
-                        self.discriminator.model.test_batch_size,
-                        pos_head_tensor,
-                        pos_relation_tensor,
-                        pos_tail_tensor,
-                        cand_head,
-                        cand_relation,
-                        cand_tail,
-                        n_sample=len(pos_head_tensor),
-                    ):
-                        gen_step = self.generator.generator_step(
-                            batch_hs,
-                            batch_rs,
-                            batch_ts,
-                            n_sample=n_generated_valid_negative,
-                            temperature=temperature,
-                            train=False,
-                        )
-                        gen_head_fake, gen_tail_fake = next(gen_step)
-                        gen_head_fake = gen_head_fake.to(config.device)
-                        gen_tail_fake = gen_tail_fake.to(config.device)
-
-                        batch_relation_device = batch_relation.to(config.device)
-                        if gen_head_fake.dim() == batch_relation_device.dim() + 1:
-                            relation_for_fake = batch_relation_device.unsqueeze(1).expand_as(gen_head_fake)
-                        else:
-                            relation_for_fake = batch_relation_device
-
-                        gen_bad_scores = self.discriminator.score(
-                            gen_head_fake,
-                            relation_for_fake,
-                            gen_tail_fake,
-                        ).detach().cpu().numpy()
-
-                        if gen_bad_scores.size > 0:
-                            neg_scores.extend(gen_bad_scores.reshape(-1).tolist())
-            else:
-                logging.warning(
-                    "Generator validation negatives not added: validation labels contain no positive samples."
-                )
-
-        if len(pos_scores) == 0 or len(neg_scores) == 0:
-            logging.warning("Validation threshold midpoint not updated: validation labels must contain both positive and negative samples.")
-            return None
-
-        # Statistic analysis of scores
-        pos_stats = _safe_stats("POS_SCORE", pos_scores)
-        neg_stats = _safe_stats("NEG_SCORE", neg_scores)
-
-        analysis_dir = os.path.join('.', 'logs', config._config.dataset, config._config.task)
-        os.makedirs(analysis_dir, exist_ok=True)
-        analysis_filename = config.build_timestamped_filename("valid_score_analysis", ".txt")
-        analysis_path = os.path.join(analysis_dir, analysis_filename)
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-        # Write one analysis file per validation snapshot.
-        with open(analysis_path, "w", encoding="utf-8") as f:
-            f.write("VALID SCORE ANALYSIS (LATEST)\n")
-            f.write(f"valid_time: {timestamp}\n\n")
-
-            def _write_stats(name: str, stats: dict) -> None:
-                f.write(f"{name}\n")
-                f.write(f"  n_sample: {stats['n_sample']}\n")
-                if stats["n_sample"] == 0:
-                    f.write("  min: N/A\n  max: N/A\n  mean: N/A\n  median: N/A\n  std: N/A\n")
-                    f.write("  p1/p5/p10/p25/p50/p75/p90/p95/p99: N/A\n\n")
-                    return
-
-                p = stats["percentiles"]
-                f.write(f"  min: {stats['min']:.6f}\n")
-                f.write(f"  max: {stats['max']:.6f}\n")
-                f.write(f"  mean: {stats['mean']:.6f}\n")
-                f.write(f"  median: {stats['median']:.6f}\n")
-                f.write(f"  std: {stats['std']:.6f}\n")
-                f.write(
-                    "  percentiles: "
-                    f"p1={p[1]:.6f}, p5={p[5]:.6f}, p10={p[10]:.6f}, "
-                    f"p25={p[25]:.6f}, p50={p[50]:.6f}, p75={p[75]:.6f}, "
-                    f"p90={p[90]:.6f}, p95={p[95]:.6f}, p99={p[99]:.6f}\n\n"
-                )
-
-            _write_stats("POS_SCORE", pos_stats)
-            _write_stats("NEG_SCORE", neg_stats)
-        logging.info(f"Wrote latest validation score analysis to {analysis_path}")
-
-        true_stat = float(np.percentile(np.asarray(pos_scores), true_percentile))
-        fake_stat = float(np.percentile(np.asarray(neg_scores), fake_percentile))
-        logging.info(
-            f"Validation percentile midpoint stats:\n"
-            f"\ttrue_p{true_percentile:.1f}={true_stat:.6f}\n"
-            f"\tfake_p{fake_percentile:.1f}={fake_stat:.6f}"
-        )
-        balanced_midpoint = true_fake_balance * true_stat + (1 - true_fake_balance) * fake_stat
-        return balanced_midpoint
 
     def evaluate_on_link_prediction(self, heads: torch.Tensor, tails: torch.Tensor, test_data: tuple,
                                     filt: bool=True, k_list: list=[1, 3, 10]) -> dict:
@@ -576,8 +457,7 @@ class KBGAN():
         return metrics
 
     def evaluate_on_triple_classification(self, test_data_w_label: tuple,
-                                          optimizing_metric: str='accuracy',
-                                          use_maxgood_minbad_threshold: bool=True) -> dict:
+                                          optimizing_metric: str='accuracy') -> dict:
         if not isinstance(test_data_w_label[0], torch.Tensor):
             test_data_w_label = [torch.LongTensor(vec) for vec in test_data_w_label]
             

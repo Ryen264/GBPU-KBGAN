@@ -11,6 +11,9 @@ def _combine_pair_embeddings(z_entity: torch.Tensor, z_relation: torch.Tensor, a
 		return z_entity * z_relation
 	raise ValueError("align_op must be one of ['add', 'mul']")
 
+def _normalize_rows(z: torch.Tensor) -> torch.Tensor:
+	return F.normalize(z, p=2, dim=-1)
+
 def uniform_loss(
 	ids: torch.Tensor,
 	emb: Callable[[torch.Tensor], torch.Tensor],
@@ -47,11 +50,12 @@ def compose_query(
 	relation_ids: torch.Tensor,
 	entity_emb: Callable[[torch.Tensor], torch.Tensor],
 	relation_emb: Callable[[torch.Tensor], torch.Tensor],
+	attention_emb: Callable[[torch.Tensor], torch.Tensor] = None,
 	align_balance: float = 0.5,
 	align_op: str = 'add',
 	) -> torch.Tensor:
 	"""Compose and normalize query embedding q from (head, relation)."""
-	if not (0.0 <= align_balance <= 1.0):
+	if attention_emb is None and not (0.0 <= align_balance <= 1.0):
 		raise ValueError("align_balance must be in [0, 1].")
 
 	z_head = entity_emb(head_ids)
@@ -59,12 +63,20 @@ def compose_query(
 	if z_head.shape != z_rel.shape:
 		raise ValueError("head_ids and relation_ids must map to embeddings of identical shape.")
 
-	z_head = F.normalize(z_head, p=2, dim=-1)
-	z_rel = F.normalize(z_rel, p=2, dim=-1)
+	z_head = _normalize_rows(z_head)
+	z_rel = _normalize_rows(z_rel)
+	if attention_emb is not None:
+		z_attention = torch.sigmoid(attention_emb(relation_ids))
+		if z_attention.shape != z_head.shape:
+			raise ValueError("relation attention weights must have the same shape as entity embeddings.")
+		z_head = _normalize_rows(z_head * z_attention)
+		z_query = _combine_pair_embeddings(z_head, z_rel, align_op='mul')
+		return _normalize_rows(z_query)
+
 	z_head = align_balance * z_head
 	z_rel = (1.0 - align_balance) * z_rel
 	z_query = _combine_pair_embeddings(z_head, z_rel, align_op=align_op)
-	return F.normalize(z_query, p=2, dim=-1)
+	return _normalize_rows(z_query)
 
 def align_distance_sq(
 	head_ids: torch.Tensor,
@@ -72,6 +84,7 @@ def align_distance_sq(
 	tail_ids: torch.Tensor,
 	entity_emb: Callable[[torch.Tensor], torch.Tensor],
 	relation_emb: Callable[[torch.Tensor], torch.Tensor],
+	attention_emb: Callable[[torch.Tensor], torch.Tensor] = None,
 	align_balance: float = 0.5,
 	align_op: str = 'add',
 	) -> torch.Tensor:
@@ -81,10 +94,11 @@ def align_distance_sq(
 		relation_ids=relation_ids,
 		entity_emb=entity_emb,
 		relation_emb=relation_emb,
+		attention_emb=attention_emb,
 		align_balance=align_balance,
 		align_op=align_op,
 	)
-	z_tail = F.normalize(entity_emb(tail_ids), p=2, dim=-1)
+	z_tail = _normalize_rows(entity_emb(tail_ids))
 	if z_query.shape != z_tail.shape:
 		raise ValueError("(head, relation) query embeddings and tail embeddings must have identical shape.")
 	return (z_query - z_tail).pow(2).sum(dim=-1)
@@ -95,6 +109,7 @@ def align_loss(
 	tail_ids: torch.Tensor,
 	entity_emb: Callable[[torch.Tensor], torch.Tensor],
 	relation_emb: Callable[[torch.Tensor], torch.Tensor],
+	attention_emb: Callable[[torch.Tensor], torch.Tensor] = None,
 	align_balance: float = 0.5,
 	align_op: str = 'add',
 	) -> torch.Tensor:
@@ -120,6 +135,7 @@ def align_loss(
 		tail_ids=tail_ids,
 		entity_emb=entity_emb,
 		relation_emb=relation_emb,
+		attention_emb=attention_emb,
 		align_balance=align_balance,
 		align_op=align_op,
 	).mean()

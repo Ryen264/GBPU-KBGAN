@@ -15,7 +15,7 @@ EPSILON = 1e-30
 OPTIMIZER_MAP = {'Adam': Adam, 'SGD': SGD, 'AdamW': AdamW, 'RMSprop': RMSprop, 'Adagrad': Adagrad}
 
 class TransEModule(BaseModule):
-    def __init__(self, n_entity: int, n_relation: int, config: config.config):
+    def __init__(self, n_entity: int, n_relation: int, config: config.config, use_relation_attention: bool = False):
         super().__init__()
         self.model_type = 'TransE'
 
@@ -27,8 +27,11 @@ class TransEModule(BaseModule):
         self.n_entity, self.n_relation = n_entity, n_relation
         self.relation_embed = nn.Embedding(self.n_relation, self.dim)
         self.entity_embed = nn.Embedding(self.n_entity, self.dim)
+        self.relation_attention = nn.Embedding(self.n_relation, self.dim) if use_relation_attention else None
         self.is_distance_based = True
         self.init_weight()
+        if self.relation_attention is not None:
+            self.relation_attention.weight.data.zero_()
 
     def init_weight(self) -> None:
         for param in self.parameters():
@@ -52,7 +55,7 @@ class TransEModule(BaseModule):
         self.relation_embed.weight.data.renorm_(2, 0, 1)
 
 class TransE(BaseModel):
-    def __init__(self, n_entity: int, n_relation: int):
+    def __init__(self, n_entity: int, n_relation: int, use_relation_attention: bool = False):
         super().__init__(n_entity, n_relation)
         self.model_type = 'TransE'
         self.model_config = config._config[self.model_type]
@@ -65,7 +68,7 @@ class TransE(BaseModel):
         self.optimizer_name = self.model_config.optimizer
         self.lr = self.model_config.learning_rate
 
-        self.model = TransEModule(self.n_entity, self.n_relation, self.model_config)
+        self.model = TransEModule(self.n_entity, self.n_relation, self.model_config, use_relation_attention=use_relation_attention)
         self.model.to(config.device)
         self.is_distance_based = self.model.is_distance_based
         self.margin = self.model.margin
@@ -117,7 +120,7 @@ class TransE(BaseModel):
         return best_perf, best_epoch
     
 class TransDModule(BaseModule):
-    def __init__(self, n_entity: int, n_relation: int, config: config.config):
+    def __init__(self, n_entity: int, n_relation: int, config: config.config, use_relation_attention: bool = False):
         super().__init__()
         self.model_type = 'TransD'
 
@@ -131,8 +134,11 @@ class TransDModule(BaseModule):
         self.entity_embed = nn.Embedding(self.n_entity, self.dim)
         self.proj_relation_embed = nn.Embedding(self.n_relation, self.dim)
         self.proj_entity_embed = nn.Embedding(self.n_entity, self.dim)
+        self.relation_attention = nn.Embedding(self.n_relation, self.dim) if use_relation_attention else None
         self.is_distance_based = True
         self.init_weight()
+        if self.relation_attention is not None:
+            self.relation_attention.weight.data.zero_()
 
     def init_weight(self) -> None:
         for param in self.parameters():
@@ -160,7 +166,7 @@ class TransDModule(BaseModule):
             param.data.renorm_(2, 0, 1)
 
 class TransD(BaseModel):
-    def __init__(self, n_entity: int, n_relation: int):
+    def __init__(self, n_entity: int, n_relation: int, use_relation_attention: bool = False):
         super().__init__(n_entity, n_relation)
         self.model_type = 'TransD'
         self.model_config = config._config[self.model_type]
@@ -173,7 +179,7 @@ class TransD(BaseModel):
         self.optimizer_name = self.model_config.optimizer
         self.lr = self.model_config.learning_rate
 
-        self.model = TransDModule(self.n_entity, self.n_relation, self.model_config)
+        self.model = TransDModule(self.n_entity, self.n_relation, self.model_config, use_relation_attention=use_relation_attention)
         self.model.to(config.device)
         self.is_distance_based = self.model.is_distance_based
         self.margin = self.model.margin
@@ -237,7 +243,7 @@ class TransD(BaseModel):
         return best_perf, best_epoch
     
 class DistMultModule(BaseModule):
-    def __init__(self, n_entity: int, n_relation: int, config: config.config):
+    def __init__(self, n_entity: int, n_relation: int, config: config.config, use_relation_attention: bool = False):
         super().__init__()
         self.model_type = 'DistMult'
         
@@ -249,6 +255,9 @@ class DistMultModule(BaseModule):
         self.relation_embed.weight.data.div_((self.dim / self.sigma ** 2) ** (1 / 6))
         self.entity_embed = nn.Embedding(self.n_entity, self.dim)
         self.entity_embed.weight.data.div_((self.dim / self.sigma ** 2) ** (1 / 6))
+        self.relation_attention = nn.Embedding(self.n_relation, self.dim) if use_relation_attention else None
+        if self.relation_attention is not None:
+            self.relation_attention.weight.data.zero_()
         self.is_distance_based = False
 
     def forward(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor) -> torch.Tensor:
@@ -264,7 +273,7 @@ class DistMultModule(BaseModule):
         return self.forward(head, relation, tail)
 
 class DistMult(BaseModel):
-    def __init__(self, n_entity: int, n_relation: int):
+    def __init__(self, n_entity: int, n_relation: int, use_relation_attention: bool = False):
         super().__init__(n_entity, n_relation)
         self.model_type = 'DistMult'
         self.model_config = config._config[self.model_type]
@@ -281,7 +290,7 @@ class DistMult(BaseModel):
         self.lr = self.model_config.learning_rate
         self.weight_decay = self.lam / self.n_batch
 
-        self.model = DistMultModule(self.n_entity, self.n_relation, self.model_config)
+        self.model = DistMultModule(self.n_entity, self.n_relation, self.model_config, use_relation_attention=use_relation_attention)
         self.model.to(config.device)
         self.is_distance_based = self.model.is_distance_based
         self.opt = OPTIMIZER_MAP[self.optimizer_name](self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
@@ -333,7 +342,7 @@ class DistMult(BaseModel):
         return best_perf, best_epoch
 
 class ComplExModule(BaseModule):
-    def __init__(self, n_entity: int, n_relation: int, config: config.config):
+    def __init__(self, n_entity: int, n_relation: int, config: config.config, use_relation_attention: bool = False):
         super().__init__()
         self.model_type = 'ComplEx'
 
@@ -345,6 +354,9 @@ class ComplExModule(BaseModule):
         self.relation_im_embed = nn.Embedding(self.n_relation, self.dim)
         self.entity_re_embed = nn.Embedding(self.n_entity, self.dim)
         self.entity_im_embed = nn.Embedding(self.n_entity, self.dim)
+        self.relation_attention = nn.Embedding(self.n_relation, self.dim * 2) if use_relation_attention else None
+        if self.relation_attention is not None:
+            self.relation_attention.weight.data.zero_()
         self.is_distance_based = False
         self.init_weight()
 
@@ -368,7 +380,7 @@ class ComplExModule(BaseModule):
         return self.forward(head, relation, tail)
 
 class ComplEx(BaseModel):
-    def __init__(self, n_entity: int, n_relation: int):
+    def __init__(self, n_entity: int, n_relation: int, use_relation_attention: bool = False):
         super().__init__(n_entity, n_relation)
         self.model_type = 'ComplEx'
         self.model_config = config._config[self.model_type]
@@ -385,7 +397,7 @@ class ComplEx(BaseModel):
         self.lr = self.model_config.learning_rate
         self.weight_decay = self.lam / self.n_batch
 
-        self.model = ComplExModule(self.n_entity, self.n_relation, self.model_config)
+        self.model = ComplExModule(self.n_entity, self.n_relation, self.model_config, use_relation_attention=use_relation_attention)
         self.model.to(config.device)
         self.is_distance_based = self.model.is_distance_based
         self.opt = OPTIMIZER_MAP[self.optimizer_name](self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay)

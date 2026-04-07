@@ -18,6 +18,13 @@ KBGAN:
   loss_ema_beta: 0.98
   class_rank_balance_start: 0.2
   class_rank_balance_warmup_epochs: 100
+  true_align_gamma: 1.0
+  uniform_gamma: 1.0
+  fake_align_gamma: 1.0
+  dens_beta: 0.0
+  alpha: 1.0
+  uniform_lambda: 1.0
+  beta: 0.0
 TransE:
   optimizer: Adagrad
   learning_rate: 0.01

@@ -78,7 +78,18 @@ class BaseModel(object):
         self.test_batch_size = config._config.test_batch_size
 
     def load(self, filepath: str) -> None:
-        self.model.load_state_dict(torch.load(filepath, map_location=config.device))
+        checkpoint = torch.load(filepath, map_location=config.device, weights_only=False)
+        if isinstance(checkpoint, dict) and ("state_dict" in checkpoint or "model_state_dict" in checkpoint):
+            state_dict = checkpoint.get("state_dict", checkpoint.get("model_state_dict"))
+        else:
+            state_dict = checkpoint
+
+        model_state_keys = set(self.model.state_dict().keys())
+        checkpoint_keys = set(state_dict.keys())
+        has_attention = any(key.startswith("relation_attention.") for key in model_state_keys)
+        checkpoint_has_attention = any(key.startswith("relation_attention.") for key in checkpoint_keys)
+        strict = has_attention == checkpoint_has_attention
+        self.model.load_state_dict(state_dict, strict=strict)
 
     def save(self, filepath: str=None) -> None:
         if filepath is None:

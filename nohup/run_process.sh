@@ -48,7 +48,7 @@ for arg in "$@"; do
     fi
 done
 
-cmd=("$PYTHON_BIN" "$ROOT_DIR/main.py")
+cmd=("$PYTHON_BIN" -u "$ROOT_DIR/main.py")
 if [[ -n "$config_path" ]]; then
     cmd+=("$config_path")
 fi
