@@ -21,6 +21,7 @@ This project implements KBGAN (Knowledge Base GAN), an adversarial learning fram
   - `Component` class: Wraps individual models (discriminator/generator)
   - `KBGAN` class: Implements adversarial training loop, reward computation, policy gradient updates
   - Handles model loading, saving, and evaluation
+  - Full v4 pipeline reference: [docs/kbgan_v4_pipeline_algorithm.md](docs/kbgan_v4_pipeline_algorithm.md)
 
 - **`models.py`** - Knowledge graph embedding model implementations
   - `TransE`: Translation-based model (h + r ≈ t)

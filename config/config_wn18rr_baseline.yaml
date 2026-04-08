@@ -21,10 +21,9 @@ KBGAN:
   true_align_gamma: 1.0
   uniform_gamma: 1.0
   fake_align_gamma: 1.0
-  dens_beta: 0.0
   alpha: 1.0
   uniform_lambda: 1.0
-  beta: 0.0
+  lambda_anchor: 0.0
 TransE:
   optimizer: Adagrad
   learning_rate: 0.01

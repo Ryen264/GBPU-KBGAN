@@ -18,10 +18,9 @@ KBGAN:
   uniform_gamma: 1.0
   true_align_gamma: 1.0
   fake_align_gamma: 1.0
-  dens_beta: 0.5
   alpha: 1.0
   uniform_lambda: 1.0
-  beta: 0.5
+  lambda_anchor: 0.0
   emb_align_op: 'add'
   emb_align_balance: 0.7
 TransE:

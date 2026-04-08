@@ -6,7 +6,7 @@ from typing import Tuple
 import numpy as np
 
 from datasets import batch_by_num, batch_by_size, BernCorrupterMulti
-from component import Component
+from component import Component, OPTIMIZER_MAP
 import loss
 import config
 
@@ -26,6 +26,19 @@ class KBGAN():
         self.generator = Component(role="generator", model_type=generator_type,
                                    n_entity=n_entity, n_relation=n_relation)
 
+        # GAN fine-tuning optimizer setup with fallback to component defaults.
+        self.model_config = config._config["KBGAN"]
+        g_opt_name = getattr(self.model_config, 'g_optimizer', self.generator.model.optimizer_name)
+        d_opt_name = getattr(self.model_config, 'd_optimizer', self.discriminator.model.optimizer_name)
+        g_lr = getattr(self.model_config, 'g_learning_rate', self.generator.model.lr)
+        d_lr = getattr(self.model_config, 'd_learning_rate', self.discriminator.model.lr)
+        self.g_opt = OPTIMIZER_MAP.get(g_opt_name, OPTIMIZER_MAP[self.generator.model.optimizer_name])(
+            self.generator.model.parameters(), lr=g_lr
+        )
+        self.d_opt = OPTIMIZER_MAP.get(d_opt_name, OPTIMIZER_MAP[self.discriminator.model.optimizer_name])(
+            self.discriminator.model.parameters(), lr=d_lr
+        )
+
         self.discriminator_path = self.discriminator.model_path
         self.generator_path = self.generator.model_path
 
@@ -36,6 +49,14 @@ class KBGAN():
 
         self.model_name = 'kbgan_' + 'dis-' + self.discriminator_type + '_gen-' + self.generator_type + '.mdl'
         self.kbgan_path = os.path.join(self.task_dir, self.model_name)
+        run_token = time.strftime('%y%m%d-%H%M%S') + f'-{os.getpid()}'
+        self.validation_analysis_path = os.path.join(
+            '.',
+            'logs',
+            self.dataset,
+            self.task,
+            f'valid_score_analysis_{run_token}.txt',
+        )
         self.optimal_threshold = None
         self.best_validation_perf = None
         self.final_validation_perf = None
@@ -102,7 +123,7 @@ class KBGAN():
         log_dir = os.path.join('.', 'logs', self.dataset, self.task)
         os.makedirs(log_dir, exist_ok=True)
         timestamp = time.strftime('%y%m%d-%H%M%S')
-        log_path = os.path.join(log_dir, f'valid_score_analysis_{timestamp}.txt')
+        log_path = self.validation_analysis_path
 
         lines = [
             'VALID SCORE ANALYSIS (LATEST)',
@@ -188,8 +209,8 @@ class KBGAN():
         )
 
         # [CLASS TASK] - v4: Unaugmented Validation
-        # IMPORTANT: Validation MUST use strictly unaugmented data (1:1 positive:negative ratio).
-        # This ensures learned thresholds perfectly generalize to standard test set.
+        # IMPORTANT: Validation uses the raw, unmodified validation set.
+        # This keeps threshold tuning aligned with the standard test distribution.
         if do_class_task:
             class_data_w_label = valid_data_w_label
 
@@ -233,6 +254,7 @@ class KBGAN():
                 emb_align_balance: float=0.7,
                 alpha: float=None,
                 uniform_lambda: float=None,
+                lambda_anchor: float=0.0,
                 rank_optimizing_metric: str='mrr',
                 rank_filt: bool=True,
                 rank_k_list: list=[1, 3, 10],
@@ -305,6 +327,33 @@ class KBGAN():
         # [EARLY STOPPING]
         patience_counter = 0
 
+        # [STEP A] Freeze pre-trained weights for anchor loss.
+        # Resolve embedding weights from the wrapped model module across model types.
+        def _current_anchor_weights() -> tuple[torch.Tensor, torch.Tensor]:
+            model_module = self.discriminator.model.model
+            if hasattr(model_module, "entity_embed") and hasattr(model_module, "relation_embed"):
+                return model_module.entity_embed.weight, model_module.relation_embed.weight
+            if (
+                hasattr(model_module, "entity_re_embed")
+                and hasattr(model_module, "entity_im_embed")
+                and hasattr(model_module, "relation_re_embed")
+                and hasattr(model_module, "relation_im_embed")
+            ):
+                entity_weight = torch.cat(
+                    [model_module.entity_re_embed.weight, model_module.entity_im_embed.weight],
+                    dim=-1,
+                )
+                relation_weight = torch.cat(
+                    [model_module.relation_re_embed.weight, model_module.relation_im_embed.weight],
+                    dim=-1,
+                )
+                return entity_weight, relation_weight
+            raise AttributeError("Unsupported discriminator embedding layout for anchor loss.")
+
+        current_entity_weight, current_relation_weight = _current_anchor_weights()
+        frozen_entity_embed = current_entity_weight.detach().clone()
+        frozen_relation_embed = current_relation_weight.detach().clone()
+
         for epoch in range(n_epoch):
             # [ORIGINAL KBGAN]
             epoch_emb_loss = 0.0
@@ -321,6 +370,7 @@ class KBGAN():
                     n_sample=n_sample,
                     temperature=temperature,
                     train=True,
+                    optimizer=self.g_opt,
                     sampling_strategy=negative_sampling_strategy,
                 )
                 head_smpl, tail_smpl = next(gen_step)
@@ -372,8 +422,17 @@ class KBGAN():
                 true_pull = true_align_gamma * true_dist_sq.mean()
                 # Bounded margin: max(0, mu - ||q - e_t'||_2^2)
                 # Once fake is pushed past safe_margin, discriminator stops pushing (no neighborhood shattering).
-                fake_push = fake_align_gamma * torch.clamp(safe_margin - fake_dist_sq, min=0).mean()
-                emb_loss = true_pull + fake_push + uniform_gamma * (uniform_loss_batch / max(1, batch_size))
+                fake_loss = fake_align_gamma * torch.relu(safe_margin - fake_dist_sq).mean()
+
+                # [STEP B] Add anchor loss to regularize embeddings toward pre-trained weights
+                if lambda_anchor > 0.0:
+                    current_entity_weight, current_relation_weight = _current_anchor_weights()
+                    anchor_loss_e = torch.nn.functional.mse_loss(current_entity_weight, frozen_entity_embed)
+                    anchor_loss_r = torch.nn.functional.mse_loss(current_relation_weight, frozen_relation_embed)
+                    anchor_loss = anchor_loss_e + anchor_loss_r
+                    emb_loss = true_pull + fake_loss + uniform_gamma * (uniform_loss_batch / max(1, batch_size)) + lambda_anchor * anchor_loss
+                else:
+                    emb_loss = true_pull + fake_loss + uniform_gamma * (uniform_loss_batch / max(1, batch_size))
 
                 # Organic Generator Reward (v4):
                 # Pure query-fooling term: -||q - e_t'||_2^2
@@ -387,11 +446,12 @@ class KBGAN():
                 baseline_reward = float(rewards_raw.mean().item()) if rewards_raw.numel() > 0 else 0.0
 
                 # Optimizer Step
-                self.discriminator.opt_zero_grad()
+                self.d_opt.zero_grad()
                 emb_loss.backward()
 
                 # Apply entity embedding constraints (e.g. norm <= 1)
-                self.discriminator.opt_step()
+                self.d_opt.step()
+                self.discriminator.model.constraint()
 
                 # Losses are batch means, so weight by batch size then divide by n_train at epoch end.
                 epoch_emb_loss += emb_loss.detach().item() * batch_size

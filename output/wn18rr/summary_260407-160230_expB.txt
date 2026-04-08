@@ -1,0 +1,63 @@
+RUN SUMMARY REPORT
+timestamp: 260407-160230
+dataset: wn18rr
+task: all
+mode: full-train
+config_path: config/config_wn18rr_expB.yaml
+discriminator: TransE
+generator: DistMult
+checkpoint: ./models/wn18rr/all/kbgan_dis-TransE_gen-DistMult.mdl
+component_training_time_s: 3972.972612
+kbgan_training_time_s: 459.913452
+best_training_perf: 0.497630
+best_training_epoch: 10
+best_validation_perf: 0.497630
+best_validation_epoch: 10
+final_validation_perf: 0.497630
+total_runtime_s: 4454.258980
+
+COMPONENT TRAINING
+  TransE_best_validation_perf: 0.589194
+  DistMult_best_validation_perf: 0.604286
+
+TEST RESULTS
+link_prediction:
+  mr: 7049.615667
+  mrr: 0.367073
+  hit@1: 0.325782
+  hit@3: 0.391353
+  hit@10: 0.440013
+triple_classification:
+  accuracy: 0.801213
+  precision: 0.887839
+  recall: 0.689534
+  f1: 0.776221
+  pr_auc: 0.872089
+  roc_auc: 0.820997
+
+Discriminator 1k link prediction:
+  mr=7049.6157
+  mrr=0.3671
+  hit@1=0.3258
+  hit@3=0.3914
+  hit@10=0.4400
+Generator 1k link prediction:
+  mr=5133.7325
+  mrr=0.3699
+  hit@1=0.3181
+  hit@3=0.4009
+  hit@10=0.4628
+Discriminator 1k triple classification:
+  accuracy=0.8012
+  precision=0.8878
+  recall=0.6895
+  f1=0.7762
+  pr_auc=0.8721
+  roc_auc=0.8210
+Generator 1k triple classification:
+  accuracy=0.8245
+  precision=0.8614
+  recall=0.7735
+  f1=0.8151
+  pr_auc=0.9014
+  roc_auc=0.8694

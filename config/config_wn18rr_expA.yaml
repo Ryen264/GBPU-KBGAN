@@ -1,22 +1,42 @@
 g_config: DistMult
 d_config: TransE
 test_batch_size: 100
-dataset: fb15k237
+dataset: wn18rr
 task: all
 KBGAN:
-  class_rank_balance: 1.0
+  # --- FINE-TUNING OVERRIDES ---
+  g_optimizer: Adam
+  d_optimizer: Adam
+  g_learning_rate: 0.0001
+  d_learning_rate: 0.0001
+
+  # --- TRAINING LOOP SETTINGS ---
+  n_epoch: 100
+  epoch_per_test: 10
+  n_batch: 256
   early_stop_patience: -1
-  temperature: 1.0
-  n_sample: 20
-  n_epoch: 5000
-  n_batch: 100
-  epoch_per_test: 100
-  true_align_gamma: 1.0
-  uniform_gamma: 1.0
-  fake_align_gamma: 1.0
+  class_rank_balance: 0.5
+  entity_uniform_max_ids: 2048
+
+  # --- GENERATOR SETTINGS ---
+  temperature: 1.5
+  n_sample: 10
+  n_candidate: 100
+  negative_sampling_strategy: topk
+
+  # --- DISCRIMINATOR GEOMETRY SETTINGS (v4) ---
   alpha: 1.0
-  uniform_lambda: 1.0
-  lambda_anchor: 0.0
+  mu: 2.0
+  uniform_lambda: 0.05
+  lambda_anchor: 5.0
+  true_align_gamma: 1.0
+  fake_align_gamma: 1.0
+  uniform_gamma: 1.0
+  emb_uniform_scale: 2.0
+
+  # --- COMPOSITION (if applicable to D) ---
+  emb_align_op: 'mul'
+  emb_align_balance: 0.7
 TransE:
   optimizer: Adagrad
   learning_rate: 0.01
@@ -25,7 +45,7 @@ TransE:
   p: 1
   temp: 1
   n_epoch: 1000
-  n_batch: 100
+  n_batch: 256
   epoch_per_test: 50
   model_file: TransE.mdl
 TransD:
@@ -36,31 +56,31 @@ TransD:
   p: 1
   temp: 1
   n_epoch: 1000
-  n_batch: 100
+  n_batch: 256
   epoch_per_test: 50
   model_file: TransD.mdl
 DistMult:
   optimizer: Adagrad
   learning_rate: 0.01
   dim: 50
-  lam: 1
   sigma: 0.2
+  lam: 0.1
   n_sample: 20
   sample_freq: 1
   n_epoch: 1000
-  n_batch: 100
+  n_batch: 256
   epoch_per_test: 50
   model_file: DistMult.mdl
 ComplEx:
   optimizer: Adagrad
   learning_rate: 0.01
-  dim: 25
-  lam: 1
+  dim: 50
   sigma: 0.2
+  lam: 0.1
   n_sample: 20
   sample_freq: 1
   n_epoch: 1000
-  n_batch: 100
+  n_batch: 256
   epoch_per_test: 50
   model_file: ComplEx.mdl
 log:

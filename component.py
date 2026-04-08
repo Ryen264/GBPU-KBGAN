@@ -349,6 +349,7 @@ class Component:
         n_sample: int = 1,
         temperature: float = 1.0,
         train: bool = True,
+        optimizer=None,
         sampling_strategy: str = "multinomial",
     ) -> Generator[torch.Tensor, torch.Tensor, None]:
         """
@@ -385,7 +386,10 @@ class Component:
 
         # Backward pass: update generator with REINFORCE
         if train:
-            self.opt_zero_grad()
+            if optimizer is None:
+                self.opt_zero_grad()
+            else:
+                optimizer.zero_grad()
             log_probs = nnf.log_softmax(logits, dim=-1)
             # Move indices to device for proper indexing
             row_idx_device = row_idx.to(config.device)
@@ -401,7 +405,11 @@ class Component:
             # Compute REINFORCE loss: -sum(rewards * log_probs)
             reinforce_loss = -torch.sum(rewards_tensor * log_probs[row_idx_device, sample_idx_device])
             reinforce_loss.backward()
-            self.opt_step()
+            if optimizer is None:
+                self.opt_step()
+            else:
+                optimizer.step()
+                self.model.constraint()
         yield None
 
     def discriminator_step(

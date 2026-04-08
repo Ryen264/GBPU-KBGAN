@@ -65,7 +65,9 @@ def _write_summary_report(summary: dict) -> str:
         f"component_training_time_s: {_format_summary_value(summary.get('component_training_time_s', 'N/A'))}",
         f"kbgan_training_time_s: {_format_summary_value(summary.get('kbgan_training_time_s', 'N/A'))}",
         f"best_training_perf: {_format_summary_value(summary.get('best_training_perf', 'N/A'))}",
+        f"best_training_epoch: {_format_summary_value(summary.get('best_training_epoch', 'N/A'))}",
         f"best_validation_perf: {_format_summary_value(summary.get('best_validation_perf', 'N/A'))}",
+        f"best_validation_epoch: {_format_summary_value(summary.get('best_validation_epoch', 'N/A'))}",
         f"final_validation_perf: {_format_summary_value(summary.get('final_validation_perf', 'N/A'))}",
         f"total_runtime_s: {_format_summary_value(summary.get('total_runtime_s', 'N/A'))}",
         '',
@@ -130,9 +132,6 @@ def main():
         overwrite_config_with_args(args)
         print("Running config: ", _config)
 
-    # Capture startup and data-loading messages in a run-scoped log before switching to stage logs.
-    _activate_logger('run_')
-
     dis_type, gen_type = _config.d_config, _config.g_config
     class_rank_balance = _config['KBGAN']['class_rank_balance']
     early_stop_patience = _config['KBGAN']['early_stop_patience']
@@ -155,12 +154,13 @@ def main():
     # v4 Unaugmented Validation: no generator-created negatives injected into validation set
     emb_uniform_scale = _config['KBGAN'].get('emb_uniform_scale', 2.0)
     entity_uniform_max_ids = _config['KBGAN'].get('entity_uniform_max_ids', 2048)
-    uniform_gamma = _config['KBGAN'].get('uniform_lambda', _config['KBGAN'].get('uniform_gamma', 1.0))
+    uniform_gamma = _config['KBGAN'].get('uniform_gamma', _config['KBGAN'].get('uniform_lambda', 1.0))
     true_align_gamma = _config['KBGAN'].get('true_align_gamma', _config['KBGAN'].get('emb_loss_gamma', 1.0))
-    fake_align_gamma = _config['KBGAN'].get('alpha', _config['KBGAN'].get('fake_align_gamma', 1.0))
+    fake_align_gamma = _config['KBGAN'].get('fake_align_gamma', _config['KBGAN'].get('alpha', 1.0))
     safe_margin = _config['KBGAN'].get('safe_margin', _config['KBGAN'].get('mu', 1.0))
     emb_align_balance = _config['KBGAN'].get('emb_align_balance', 0.7)
     emb_align_op = _config['KBGAN'].get('emb_align_op', 'add')
+    lambda_anchor = _config['KBGAN'].get('lambda_anchor', 0.0)
     
     # Assign or construct pretrained components' paths for 'gan-train' mode
     pretrained_dis_path = os.path.join('.', 'models', DATASET, working_task, 'components', dis_type + '.mdl')
@@ -182,7 +182,9 @@ def main():
         'component_training_time_s': None,
         'kbgan_training_time_s': None,
         'best_training_perf': None,
+        'best_training_epoch': None,
         'best_validation_perf': None,
+        'best_validation_epoch': None,
         'final_validation_perf': None,
         'total_runtime_s': None,
     }
@@ -275,7 +277,7 @@ def main():
             f"\tn_epoch={n_epoch}\n\tn_batch={n_batch}\n\tepoch_per_test={epoch_per_test}\n"
             f"\trank_optimizing_metric={RANK_OPTIMIZING_METRIC}\n\trank_filt={RANK_FILT}\n\trank_k_list={RANK_K_LIST}\n"
             f"\tclass_optimizing_metric={CLASS_OPTIMIZING_METRIC}\n"
-            f"\ttrue_align_gamma={true_align_gamma}\n\temb_uniform_scale={emb_uniform_scale}\n\tentity_uniform_max_ids={entity_uniform_max_ids}\n\tuniformity_weight(lambda)={uniform_gamma}\n\temb_align_op={emb_align_op}\n\temb_align_balance={emb_align_balance}\n\tfake_alignment_weight(alpha)={fake_align_gamma}\n\tsafe_margin(mu)={safe_margin}")
+            f"\ttrue_align_gamma={true_align_gamma}\n\temb_uniform_scale={emb_uniform_scale}\n\tentity_uniform_max_ids={entity_uniform_max_ids}\n\tuniformity_weight(lambda)={uniform_gamma}\n\temb_align_op={emb_align_op}\n\temb_align_balance={emb_align_balance}\n\tfake_alignment_weight(alpha)={fake_align_gamma}\n\tsafe_margin(mu)={safe_margin}\n\tlambda_anchor={lambda_anchor}")
         kbgan_train_start = time.perf_counter()
         best_perf = model.train_kbgan(heads, tails, train_data, valid_data_with_labels,
                                     class_rank_balance=class_rank_balance,
@@ -295,8 +297,7 @@ def main():
                                     safe_margin=safe_margin,
                                     emb_align_op=emb_align_op,
                                     emb_align_balance=emb_align_balance,
-                                    alpha=fake_align_gamma,
-                                    uniform_lambda=uniform_gamma,
+                                    lambda_anchor=lambda_anchor,
                                     rank_optimizing_metric=RANK_OPTIMIZING_METRIC,
                                     rank_filt=RANK_FILT,
                                     rank_k_list=RANK_K_LIST,
@@ -304,7 +305,9 @@ def main():
                                     )
         run_summary['kbgan_training_time_s'] = time.perf_counter() - kbgan_train_start
         run_summary['best_training_perf'] = best_perf
+        run_summary['best_training_epoch'] = getattr(model, 'best_validation_epoch', None)
         run_summary['best_validation_perf'] = getattr(model, 'best_validation_perf', best_perf)
+        run_summary['best_validation_epoch'] = getattr(model, 'best_validation_epoch', None)
         run_summary['final_validation_perf'] = getattr(model, 'final_validation_perf', best_perf)
         print(f"Best validation performance while training: {best_perf}")
         t_step = log_step("Train KBGAN", t_step)
@@ -341,7 +344,7 @@ def main():
             f"\tn_epoch={n_epoch}\n\tn_batch={n_batch}\n\tepoch_per_test={epoch_per_test}\n"
             f"\trank_optimizing_metric={RANK_OPTIMIZING_METRIC}\n\trank_filt={RANK_FILT}\n\trank_k_list={RANK_K_LIST}\n"
             f"\tclass_optimizing_metric={CLASS_OPTIMIZING_METRIC}\n"
-            f"\ttrue_align_gamma={true_align_gamma}\n\temb_uniform_scale={emb_uniform_scale}\n\tentity_uniform_max_ids={entity_uniform_max_ids}\n\tuniformity_weight(lambda)={uniform_gamma}\n\temb_align_op={emb_align_op}\n\temb_align_balance={emb_align_balance}\n\tfake_alignment_weight(alpha)={fake_align_gamma}\n\tsafe_margin(mu)={safe_margin}")
+            f"\ttrue_align_gamma={true_align_gamma}\n\temb_uniform_scale={emb_uniform_scale}\n\tentity_uniform_max_ids={entity_uniform_max_ids}\n\tuniformity_weight(lambda)={uniform_gamma}\n\temb_align_op={emb_align_op}\n\temb_align_balance={emb_align_balance}\n\tfake_alignment_weight(alpha)={fake_align_gamma}\n\tsafe_margin(mu)={safe_margin}\n\tlambda_anchor={lambda_anchor}")
         kbgan_train_start = time.perf_counter()
         best_perf = model.train_kbgan(heads, tails, train_data, valid_data_with_labels,
                                     class_rank_balance=class_rank_balance,
@@ -361,8 +364,7 @@ def main():
                                     safe_margin=safe_margin,
                                     emb_align_op=emb_align_op,
                                     emb_align_balance=emb_align_balance,
-                                    alpha=fake_align_gamma,
-                                    uniform_lambda=uniform_gamma,
+                                    lambda_anchor=lambda_anchor,
                                     rank_optimizing_metric=RANK_OPTIMIZING_METRIC,
                                     rank_filt=RANK_FILT,
                                     rank_k_list=RANK_K_LIST,
@@ -370,7 +372,9 @@ def main():
                                     )
         run_summary['kbgan_training_time_s'] = time.perf_counter() - kbgan_train_start
         run_summary['best_training_perf'] = best_perf
+        run_summary['best_training_epoch'] = getattr(model, 'best_validation_epoch', None)
         run_summary['best_validation_perf'] = getattr(model, 'best_validation_perf', best_perf)
+        run_summary['best_validation_epoch'] = getattr(model, 'best_validation_epoch', None)
         run_summary['final_validation_perf'] = getattr(model, 'final_validation_perf', best_perf)
         print(f"Best validation performance while training: {best_perf}")
         t_step = log_step("Train KBGAN", t_step)
